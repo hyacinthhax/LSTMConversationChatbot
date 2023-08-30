@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Input, LSTM, Dense, Embedding
+from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout
 from tensorflow.keras.models import Model
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
@@ -104,22 +104,22 @@ class ChatbotTrainer:
             raise ValueError("Tokenizer is not initialized.")
 
         vocab_size = len(self.tokenizer.word_index) + 1  # +1 for padding token
-        
+
         max_seq_length = self.max_seq_length
         learning_rate = self.learning_rate
 
         # Encoder
         encoder_inputs = Input(shape=(max_seq_length,))
         encoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
-        encoder_lstm = LSTM(units=lstm_units, return_state=True)
-        encoder_outputs, state_h, state_c = encoder_lstm(encoder_embedding)
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.17)(encoder_embedding)  # Added dropout
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_inputs = Input(shape=(max_seq_length,))
         decoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.17)  # Added dropout
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
+
         decoder_dense = Dense(units=vocab_size, activation='softmax')
         decoder_outputs = decoder_dense(decoder_outputs)
 
@@ -151,10 +151,6 @@ class ChatbotTrainer:
         max_seq_length = self.max_seq_length  # Specify your maximum sequence length
         padded_input_sequences = pad_sequences(input_sequences, maxlen=max_seq_length, padding='post')
         padded_target_sequences = pad_sequences(target_sequences, maxlen=max_seq_length, padding='post')
-
-        # Build the model (if not already built)
-        if self.model is None:
-            self.build_model()
 
         # Compile the model (no need to specify learning_rate here, it's done in build_model)
         self.model.compile(optimizer='adam',
@@ -195,6 +191,33 @@ class ChatbotTrainer:
             self.logger.info("Model loaded successfully.")
         else:
             self.logger.warning("No saved model found.")
+            # Build the model (if not already built)
+            if self.model is None:
+                self.build_model()
+
+
+    def generate_response(self, input_text):
+        print("Input Text:", input_text)  # Debugging line
+        input_text = self.preprocess_text(input_text)
+        print("Preprocessed Text:", input_text)  # Debugging line
+        input_seq = self.tokenizer.texts_to_sequences([input_text])
+        print("Tokenized Sequence:", input_seq)  # Debugging line
+        
+        if not input_seq:
+            print("Input sequence is empty after tokenization.")
+            return "I'm sorry, I don't understand your input."
+        
+        input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
+        print("Padded Sequence:", input_seq)  # Debugging line
+        
+        if input_seq is None:
+            print("Input sequence became None after padding.")
+            return "I'm sorry, there was an issue processing your input."
+        
+        response_seq = self.model.predict(input_seq)
+        response_seq = np.argmax(response_seq, axis=-1)
+        response_text = self.tokenizer.sequences_to_texts(response_seq)[0]
+        return response_text
 
 
 if __name__ == "__main__":
@@ -256,3 +279,12 @@ if __name__ == "__main__":
         # Save training metrics plot as an image and get the filename
         plot_filename = chatbot_trainer.plot_and_save_training_metrics(history, speaker)
         chatbot_trainer.logger.info(f"Training metrics plot saved as {plot_filename}")
+
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() == "exit":
+            print("Chatbot: Goodbye!")
+            break
+        
+        response = chatbot_trainer.generate_response(user_input)
+        print(f"Chatbot: {response}")
