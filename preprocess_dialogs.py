@@ -19,29 +19,19 @@ class DialogProcessor:
         if self.corpus is None:
             raise ValueError("Corpus is not loaded.")
 
-        dialogue_data = {}  # Dictionary format: {speaker: [(input, target), ...]}
+        dialogue_data = {}  # Dictionary format: {conversation_id: [(user_input, chatbot_response), ...]}
 
-        for speaker in self.corpus.get_speaker_ids():
-            print(speaker)
-            speaker_utterance_ids = self.corpus.get_utterance_ids(
-                selector=lambda utt: utt.speaker.id == speaker
-            )
-            if len(speaker_utterance_ids) < 2:
-                continue
+        for conversation_id in self.corpus.get_conversation_ids():
+            print(conversation_id)
+            conversation = self.corpus.get_conversation(conversation_id)
+            dialog_pairs = []
 
-            speaker = str(speaker)
+            for i in range(len(conversation.utterances) - 1):
+                user_input = self.preprocess_text(conversation.utterances[i].text)
+                chatbot_response = self.preprocess_text(conversation.utterances[i + 1].text)
+                dialog_pairs.append((user_input, chatbot_response))
 
-            dialogue_pairs = []
-            for i in range(len(speaker_utterance_ids) - 1):
-                input_text = self.preprocess_text(
-                    self.corpus.get_utterance(speaker_utterance_ids[i]).text
-                )
-                target_text = self.preprocess_text(
-                    self.corpus.get_utterance(speaker_utterance_ids[i + 1]).text
-                )
-                dialogue_pairs.append((input_text, target_text))
-
-            dialogue_data[speaker] = dialogue_pairs
+            dialogue_data[conversation_id] = dialog_pairs
 
         return dialogue_data
 
@@ -56,7 +46,10 @@ if __name__ == "__main__":
     # Save processed dialogs as a Python module
     save_path = "processed_dialogs.py"
     with open(save_path, "w") as f:
-        f.write("dialog_data = {")
-        for key, data in processed_dialogs.items():
-            f.write(f"'{key}'" + ":" + f"{data}" + ",\n")
-        f.write("}")
+        f.write("processed_dialogs = {\n")
+        for conversation_id, dialog_pairs in processed_dialogs.items():
+            f.write(f"    '{conversation_id}': [\n")
+            for user_input, chatbot_response in dialog_pairs:
+                f.write(f"('{user_input}', '{chatbot_response}'),\n")
+            f.write("],\n")
+        f.write("}\n")
