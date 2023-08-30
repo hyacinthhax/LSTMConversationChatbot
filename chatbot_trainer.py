@@ -134,7 +134,7 @@ class ChatbotTrainer:
         self.logger.info("Model built successfully.")
 
 
-    def train_model(self, input_texts, target_texts):
+    def train_model(self, input_texts, target_texts, conversation_id):
         self.logger.info("Training Model...")
 
         if self.corpus is None or self.tokenizer is None:
@@ -174,6 +174,10 @@ class ChatbotTrainer:
         self.logger.info("Model trained successfully.")
         self.save_model()
 
+        # Save training metrics plot as an image and get the filename
+        plot_filename = self.plot_and_save_training_metrics(history, conversation_id)
+        self.logger.info(f"Training metrics plot saved as {plot_filename}")
+
         return history  # Return the history object
 
 
@@ -196,36 +200,76 @@ class ChatbotTrainer:
                 self.build_model()
 
 
-    def generate_response(self, input_text):
-        print("Input Text:", input_text)  # Debugging line
-        input_text = self.preprocess_text(input_text)
-        print("Preprocessed Text:", input_text)  # Debugging line
-        input_seq = self.tokenizer.texts_to_sequences([input_text])
-        print("Tokenized Sequence:", input_seq)  # Debugging line
-        
-        if not input_seq:
-            print("Input sequence is empty after tokenization.")
-            return "I'm sorry, I don't understand your input."
-        
-        input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
-        print("Padded Sequence:", input_seq)  # Debugging line
-        
-        if input_seq is None:
-            print("Input sequence became None after padding.")
-            return "I'm sorry, there was an issue processing your input."
-        
-        response_seq = self.model.predict(input_seq)
-        response_seq = np.argmax(response_seq, axis=-1)
-        response_text = self.tokenizer.sequences_to_texts(response_seq)[0]
+    def beam_search(self, input_seq, beam_width=3, max_length=50):
+        start_token = self.tokenizer.word_index['<start>']
+        end_token = self.tokenizer.word_index['<end>']
+
+        # Initialize beam search with a single hypothesis
+        initial_state = self.model.layers[2].initialize_states(batch_size=1)
+        initial_state = [initial_state, initial_state]
+        initial_beam = BeamState(score=0.0, sequence=[start_token], state=initial_state)
+
+        beam_states = [initial_beam]
+
+        # Perform beam search
+        for _ in range(max_length):
+            new_beam_states = []
+            for state in beam_states:
+                if state.sequence[-1] == end_token:
+                    # If the hypothesis ends, add it to the final hypotheses
+                    new_beam_states.append(state)
+                else:
+                    # Generate next token probabilities and states
+                    decoder_input = np.array([state.sequence[-1]])
+                    decoder_state = state.state
+
+                    decoder_output, decoder_state = self.model.layers[2](decoder_input, initial_state=decoder_state)
+                    token_probs = decoder_output[0, 0]
+
+                    # Get the top beam_width tokens
+                    top_tokens = np.argsort(token_probs)[-beam_width:]
+
+                    for token in top_tokens:
+                        new_seq = state.sequence + [token]
+                        new_score = state.score - np.log(token_probs[token])
+                        new_state = decoder_state
+
+                        new_beam_states.append(BeamState(score=new_score, sequence=new_seq, state=new_state))
+
+            # Select top beam_width hypotheses
+            new_beam_states.sort(key=lambda x: x.score)
+            beam_states = new_beam_states[:beam_width]
+
+        # Get the hypothesis with the highest score
+        best_hypothesis = max(beam_states, key=lambda x: x.score)
+        return best_hypothesis.sequence[1:]  # Exclude the start token
+
+
+    def generate_response(self, user_input, beam_width=3):
+        user_input = self.preprocess_text(user_input)
+        user_input_seq = self.tokenizer.texts_to_sequences([user_input])
+        user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
+
+        response_sequence = self.beam_search(user_input_seq, beam_width=beam_width)
+        response_text = self.tokenizer.sequences_to_texts([response_sequence])[0]
+
         return response_text
 
 
+class BeamState:
+    def __init__(self, score, sequence, state):
+        self.score = score
+        self.sequence = sequence
+        self.state = state
+
+
 if __name__ == "__main__":
+    print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
     chatbot_trainer = ChatbotTrainer()
 
     # Initialize the corpus
     corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
-    chatbot_trainer.corpus = convokit.Corpus(filename=corpus_path)
+    chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
 
     chatbot_trainer.tokenizer = Tokenizer(oov_token="<OOV>", num_words=chatbot_trainer.max_vocab_size)  # Initialize the Tokenizer
 
@@ -236,10 +280,11 @@ if __name__ == "__main__":
 
     chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
 
-    # Train and save models for each speaker
+    # Train models for each speaker
     for speaker, speaker_dialogue_pairs in dialog_data.items():
         # Load the model
         chatbot_trainer.load_model()
+
         # Separate the input and target texts
         input_texts = [pair[0] for pair in speaker_dialogue_pairs]
         target_texts = [pair[1] for pair in speaker_dialogue_pairs]
@@ -254,7 +299,8 @@ if __name__ == "__main__":
             continue
 
         # Train the model using the training data for this speaker
-        history = chatbot_trainer.train_model(train_input, train_target)
+        conversation_id = f"'{speaker}'"
+        history = chatbot_trainer.train_model(train_input, train_target, conversation_id)
 
         # Preprocess the test input data using the tokenizer
         test_input_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_input)
@@ -280,11 +326,23 @@ if __name__ == "__main__":
         plot_filename = chatbot_trainer.plot_and_save_training_metrics(history, speaker)
         chatbot_trainer.logger.info(f"Training metrics plot saved as {plot_filename}")
 
+    recent_user_input = None
+    recent_chatbot_response = None
+
     while True:
         user_input = input("You: ")
         if user_input.lower() == "exit":
             print("Chatbot: Goodbye!")
             break
-        
+
+        # Print the most recent chatbot response
+        if recent_chatbot_response:
+            print(f"Chatbot: {recent_chatbot_response}")
+
+        # Generate and print the new response
         response = chatbot_trainer.generate_response(user_input)
         print(f"Chatbot: {response}")
+
+        # Update context
+        recent_user_input = user_input
+        recent_chatbot_response = response
