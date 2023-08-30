@@ -200,8 +200,6 @@ class ChatbotTrainer:
 if __name__ == "__main__":
     chatbot_trainer = ChatbotTrainer()
 
-    # Load the model
-    chatbot_trainer.load_model()
     # Initialize the corpus
     corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
     chatbot_trainer.corpus = convokit.Corpus(filename=corpus_path)
@@ -217,6 +215,8 @@ if __name__ == "__main__":
 
     # Train and save models for each speaker
     for speaker, speaker_dialogue_pairs in dialog_data.items():
+        # Load the model
+        chatbot_trainer.load_model()
         # Separate the input and target texts
         input_texts = [pair[0] for pair in speaker_dialogue_pairs]
         target_texts = [pair[1] for pair in speaker_dialogue_pairs]
