@@ -9,6 +9,7 @@ from tensorflow.keras.models import Model
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import logging
+import pickle
 import convokit
 from processed_dialogs import dialog_data  # Import the dialog_data dictionary
 from playsound import playsound
@@ -28,6 +29,7 @@ class ChatbotTrainer:
         self.batch_size = 64
         self.epochs = 10
         self.lstm_units = 128
+        self.tokenizer_save_path = "chatBotTokenizer.pkl"
 
 
     def plot_and_save_training_metrics(self, history, speaker):
@@ -65,6 +67,15 @@ class ChatbotTrainer:
         self.logger.info("Loading and preprocessing corpus...")
         self.corpus = convokit.Corpus(filename=corpus_path)
         self.logger.info("Corpus loaded and preprocessed successfully.")
+        if self.tokenizer_save_path in os.listdir(os.getcwd()):
+            # Load the saved tokenizer
+            with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
+                self.tokenizer = pickle.load(tokenizer_load_file)
+        elif self.tokenizer is None:  # Only create and save if it doesn't exist
+            self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
+            with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
+                pickle.dump(self.tokenizer, tokenizer_save_file)
+
 
     def setup_logger(self):
         logger = logging.getLogger("ChatbotTrainer")
@@ -143,6 +154,9 @@ class ChatbotTrainer:
         # Fit the tokenizer on the combined input and target texts
         all_texts = input_texts + target_texts
         self.tokenizer.fit_on_texts(all_texts)
+        # Load the saved tokenizer
+        with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
+            loaded_tokenizer = pickle.load(tokenizer_load_file)
 
         # Tokenize input and target texts
         input_sequences = self.tokenizer.texts_to_sequences(input_texts)
@@ -173,6 +187,10 @@ class ChatbotTrainer:
 
         self.logger.info("Model trained successfully.")
         self.save_model()
+
+        # Save the tokenizer
+        with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
+            pickle.dump(self.tokenizer, tokenizer_save_file)
 
         # Save training metrics plot as an image and get the filename
         plot_filename = self.plot_and_save_training_metrics(history, conversation_id)
@@ -261,88 +279,3 @@ class BeamState:
         self.score = score
         self.sequence = sequence
         self.state = state
-
-
-if __name__ == "__main__":
-    print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
-    chatbot_trainer = ChatbotTrainer()
-
-    # Initialize the corpus
-    corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
-    chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
-
-    chatbot_trainer.tokenizer = Tokenizer(oov_token="<OOV>", num_words=chatbot_trainer.max_vocab_size)  # Initialize the Tokenizer
-
-    # Once all speakers' data is processed, you can fit the tokenizer
-    all_input_texts = [pair[0] for pairs in dialog_data.values() for pair in pairs]
-    all_target_texts = [pair[1] for pairs in dialog_data.values() for pair in pairs]
-    train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
-
-    chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
-
-    # Train models for each speaker
-    for speaker, speaker_dialogue_pairs in dialog_data.items():
-        # Load the model
-        chatbot_trainer.load_model()
-
-        # Separate the input and target texts
-        input_texts = [pair[0] for pair in speaker_dialogue_pairs]
-        target_texts = [pair[1] for pair in speaker_dialogue_pairs]
-
-        # Split data into train and test for this speaker
-        train_input, test_input, train_target, test_target = train_test_split(
-            input_texts, target_texts, test_size=0.2, random_state=42)
-
-        # Check if there are enough dialogue pairs for training
-        if len(train_input) < 2 or len(train_target) < 2:
-            chatbot_trainer.logger.warning(f"Skipping training for Conversation {speaker} due to insufficient training data.")
-            continue
-
-        # Train the model using the training data for this speaker
-        conversation_id = f"'{speaker}'"
-        history = chatbot_trainer.train_model(train_input, train_target, conversation_id)
-
-        # Preprocess the test input data using the tokenizer
-        test_input_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_input)
-        padded_test_input_sequences = pad_sequences(test_input_sequences, maxlen=chatbot_trainer.max_seq_length, padding='post')
-
-        # Preprocess the test target data using the tokenizer
-        test_target_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_target)
-        padded_test_target_sequences = pad_sequences(test_target_sequences, maxlen=chatbot_trainer.max_seq_length, padding='post')
-
-        # Evaluate the model on the preprocessed test data
-        test_loss, test_accuracy = chatbot_trainer.model.evaluate(
-            [padded_test_input_sequences, padded_test_target_sequences],
-            padded_test_target_sequences,
-            batch_size=chatbot_trainer.batch_size)
-
-        chatbot_trainer.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
-        chatbot_trainer.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
-
-        # Save the model
-        chatbot_trainer.save_model()
-
-        # Save training metrics plot as an image and get the filename
-        plot_filename = chatbot_trainer.plot_and_save_training_metrics(history, speaker)
-        chatbot_trainer.logger.info(f"Training metrics plot saved as {plot_filename}")
-
-    recent_user_input = None
-    recent_chatbot_response = None
-
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() == "exit":
-            print("Chatbot: Goodbye!")
-            break
-
-        # Print the most recent chatbot response
-        if recent_chatbot_response:
-            print(f"Chatbot: {recent_chatbot_response}")
-
-        # Generate and print the new response
-        response = chatbot_trainer.generate_response(user_input)
-        print(f"Chatbot: {response}")
-
-        # Update context
-        recent_user_input = user_input
-        recent_chatbot_response = response
