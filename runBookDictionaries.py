@@ -48,8 +48,8 @@ def main():
     dialog_data = book_to_dict(bookName)
 
     # Once all book name data is processed, you can fit the tokenizer
-    all_input_texts = [pair[0] for pairs in dialog_data.values() for pair in pairs]
-    all_target_texts = [pair[1] for pairs in dialog_data.values() for pair in pairs]
+    all_input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pairs in dialog_data.values() for pair in pairs]
+    all_target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pairs in dialog_data.values() for pair in pairs]
     train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
 
     chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
@@ -60,8 +60,8 @@ def main():
         chatbot_trainer.load_model()
 
         # Separate the input and target texts
-        input_texts = [pair[0] for pair in sentences]
-        target_texts = [pair[1] for pair in sentences]
+        input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pair in sentences]
+        target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pair in sentences]
 
         # Split data into train and test for this book
         train_input, test_input, train_target, test_target = train_test_split(
