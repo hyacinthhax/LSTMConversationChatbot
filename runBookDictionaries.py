@@ -13,23 +13,28 @@ import pickle
   # Import the dialog_data dictionary
 from playsound import playsound
 from chatbotTrainer import ChatbotTrainer  # Import your ChatbotTrainer class
+import nltk
+from nltk.tokenize import sent_tokenize
 
-# Define the parse_book function to parse a book into a dictionary
-def parse_book(book_filename):
-    book_dict = {}  # Initialize an empty dictionary to store book data
 
-    # Extract the title from the filename (assuming the filename is in a specific format)
-    title = os.path.splitext(os.path.basename(book_filename))[0]
+nltk.download('punkt')  # Download the sentence tokenizer model if not already installed
 
-    # Open and read the book file
-    with open(book_filename, 'r', encoding='utf-8') as file:
-        book_text = file.read()
 
-    # Split the book text into sentences (customize the regex pattern as needed)
-    sentences = book_text.split('.')  # Example: split by period (you may need a more complex regex pattern)
+def book_to_dict(book_filename):
+    print("Making Dictionary...  ")
+    book_dict = {}  # Initialize an empty dictionary to store the book data
+    with open(book_filename, 'r', encoding='utf-8') as f:
+        data = f.read()
 
-    # Add the title and sentences to the book dictionary
-    book_dict[title] = sentences
+    # Tokenize the text into sentences
+    sentences = sent_tokenize(data)
+
+    # Iterate through sentences to create pairs
+    pairs = [(sentences[i], sentences[i + 1]) for i in range(len(sentences) - 1)]
+
+    # Create the dictionary with book title as the key
+    book_title = book_filename.split('.')[0]  # Extract the title from the filename
+    book_dict[book_title] = pairs
 
     return book_dict
 
@@ -37,37 +42,38 @@ def main():
     print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
     chatbot_trainer = ChatbotTrainer()
 
-    # Initialize the corpus
-    corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
-    chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
+    bookName = ""
+    if bookName == "":
+        bookName = input("(Put in folder with runBookDictionaries.py)  \n(SomeBookCalled.txt)  \n>  ")
+    dialog_data = book_to_dict(bookName)
 
-    # Once all speakers' data is processed, you can fit the tokenizer
+    # Once all book name data is processed, you can fit the tokenizer
     all_input_texts = [pair[0] for pairs in dialog_data.values() for pair in pairs]
     all_target_texts = [pair[1] for pairs in dialog_data.values() for pair in pairs]
     train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
 
     chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
 
-    # Train models for each speaker
-    for speaker, speaker_dialogue_pairs in dialog_data.items():
+    # Train models for each book
+    for bookName, sentences in dialog_data.items():
         # Load the model
         chatbot_trainer.load_model()
 
         # Separate the input and target texts
-        input_texts = [pair[0] for pair in speaker_dialogue_pairs]
-        target_texts = [pair[1] for pair in speaker_dialogue_pairs]
+        input_texts = [pair[0] for pair in sentences]
+        target_texts = [pair[1] for pair in sentences]
 
-        # Split data into train and test for this speaker
+        # Split data into train and test for this book
         train_input, test_input, train_target, test_target = train_test_split(
             input_texts, target_texts, test_size=0.2, random_state=42)
 
         # Check if there are enough dialogue pairs for training
         if len(train_input) < 2 or len(train_target) < 2:
-            chatbot_trainer.logger.warning(f"Skipping training for Conversation {speaker} due to insufficient training data.")
+            chatbot_trainer.logger.warning(f"Skipping training for Conversation {bookName} due to insufficient training data.")
             continue
 
-        # Train the model using the training data for this speaker
-        conversation_id = f"'{speaker}'"
+        # Train the model using the training data for this book
+        conversation_id = f"'{bookName}'"
         history = chatbot_trainer.train_model(train_input, train_target, conversation_id)
 
         # Preprocess the test input data using the tokenizer
@@ -84,8 +90,8 @@ def main():
             padded_test_target_sequences,
             batch_size=chatbot_trainer.batch_size)
 
-        chatbot_trainer.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
-        chatbot_trainer.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
+        chatbot_trainer.logger.info(f"Test loss for Conversation {bookName}: {test_loss}")
+        chatbot_trainer.logger.info(f"Test accuracy for Conversation {bookName}: {test_accuracy}")
 
         # Save the model
         chatbot_trainer.save_model()
