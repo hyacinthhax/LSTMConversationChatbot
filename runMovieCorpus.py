@@ -27,6 +27,7 @@ def main():
             chatbot_trainer.tokenizer = pickle.load(tokenizer_load_file)
             chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
             chatbot_trainer.logger.info("Model and tokenizer loaded successfully.")
+            chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
     else:
         print("Tokenizer not found, making now...  ")
         chatbot_trainer.tokenizer = Tokenizer(oov_token="<OOV>", num_words=chatbot_trainer.max_vocab_size)  # Initialize the Tokenizer
