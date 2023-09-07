@@ -22,11 +22,20 @@ def main():
 
     # Initialize the corpus
     corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
-    chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
+    if os.path.exists(chatbot_trainer.tokenizer_save_path):
+        with open(chatbot_trainer.tokenizer_save_path, 'rb') as tokenizer_load_file:
+            chatbot_trainer.tokenizer = pickle.load(tokenizer_load_file)
+            chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
+            chatbot_trainer.logger.info("Model and tokenizer loaded successfully.")
+    else:
+        print("Tokenizer not found, making now...  ")
+        chatbot_trainer.tokenizer = Tokenizer(oov_token="<OOV>", num_words=chatbot_trainer.max_vocab_size)  # Initialize the Tokenizer
+        chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
+        chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
 
     # Once all speakers' data is processed, you can fit the tokenizer
-    all_input_texts = [pair[0] for pairs in dialog_data.values() for pair in pairs]
-    all_target_texts = [pair[1] for pairs in dialog_data.values() for pair in pairs]
+    all_input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pairs in dialog_data.values() for pair in pairs]
+    all_target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pairs in dialog_data.values() for pair in pairs]
     train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
 
     chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
@@ -37,8 +46,8 @@ def main():
         chatbot_trainer.load_model()
 
         # Separate the input and target texts
-        input_texts = [pair[0] for pair in speaker_dialogue_pairs]
-        target_texts = [pair[1] for pair in speaker_dialogue_pairs]
+        input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pair in speaker_dialogue_pairs]
+        target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pair in speaker_dialogue_pairs]
 
         # Split data into train and test for this speaker
         train_input, test_input, train_target, test_target = train_test_split(
@@ -73,26 +82,7 @@ def main():
         # Save the model
         chatbot_trainer.save_model()
 
-    recent_user_input = None
-    recent_chatbot_response = None
 
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() == "exit":
-            print("Chatbot: Goodbye!")
-            break
-
-        # Print the most recent chatbot response
-        if recent_chatbot_response:
-            print(f"Chatbot: {recent_chatbot_response}")
-
-        # Generate and print the new response
-        response = chatbot_trainer.generate_response(user_input)
-        print(f"Chatbot: {response}")
-
-        # Update context
-        recent_user_input = user_input
-        recent_chatbot_response = response
 
 if __name__ == "__main__":
     main()
