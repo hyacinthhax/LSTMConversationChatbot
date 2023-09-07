@@ -18,12 +18,13 @@ from playsound import playsound
 class ChatbotTrainer:
     def __init__(self):
         self.corpus = None
-        self.max_vocab_size = max_vocab_size = 10000
+        self.max_vocab_size = max_vocab_size = 75000
         self.model = None
         self.model_filename = "chatbot_model.h5"
+        self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.logger = self.setup_logger()  # Initialize your logger here
-        self.embedding_dim = 50  # Define the embedding dimension here
+        self.embedding_dim = 100  # Define the embedding dimension here
         self.max_seq_length = 100  # Replace with your desired sequence length
         self.learning_rate = 0.001
         self.batch_size = 64
@@ -67,15 +68,6 @@ class ChatbotTrainer:
         self.logger.info("Loading and preprocessing corpus...")
         self.corpus = convokit.Corpus(filename=corpus_path)
         self.logger.info("Corpus loaded and preprocessed successfully.")
-        if self.tokenizer_save_path in os.listdir(os.getcwd()):
-            # Load the saved tokenizer
-            with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
-                self.tokenizer = pickle.load(tokenizer_load_file)
-        elif self.tokenizer is None:  # Only create and save if it doesn't exist
-            self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
-            with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
-                pickle.dump(self.tokenizer, tokenizer_save_file)
-
 
     def setup_logger(self):
         logger = logging.getLogger("ChatbotTrainer")
@@ -99,6 +91,8 @@ class ChatbotTrainer:
 
     @staticmethod
     def preprocess_text(text):
+        # Add '<start>' to beginning and '<end>'
+        text = f"<start> {text} <end>"
         # Remove double quotes from the text
         cleaned_text = text.replace('"', '')
 
@@ -122,13 +116,13 @@ class ChatbotTrainer:
         # Encoder
         encoder_inputs = Input(shape=(max_seq_length,))
         encoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.17)(encoder_embedding)  # Added dropout
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.10)(encoder_embedding)  # Added dropout
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_inputs = Input(shape=(max_seq_length,))
         decoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.17)  # Added dropout
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.10)  # Added dropout
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
         decoder_dense = Dense(units=vocab_size, activation='softmax')
@@ -154,9 +148,6 @@ class ChatbotTrainer:
         # Fit the tokenizer on the combined input and target texts
         all_texts = input_texts + target_texts
         self.tokenizer.fit_on_texts(all_texts)
-        # Load the saved tokenizer
-        with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
-            loaded_tokenizer = pickle.load(tokenizer_load_file)
 
         # Tokenize input and target texts
         input_sequences = self.tokenizer.texts_to_sequences(input_texts)
@@ -188,10 +179,6 @@ class ChatbotTrainer:
         self.logger.info("Model trained successfully.")
         self.save_model()
 
-        # Save the tokenizer
-        with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
-            pickle.dump(self.tokenizer, tokenizer_save_file)
-
         # Save training metrics plot as an image and get the filename
         plot_filename = self.plot_and_save_training_metrics(history, conversation_id)
         self.logger.info(f"Training metrics plot saved as {plot_filename}")
@@ -200,19 +187,32 @@ class ChatbotTrainer:
 
 
     def save_model(self):
-        self.logger.info("Saving Model...")
+        self.logger.info("Saving Model and Tokenizer...")
         if self.model:
+            # Save both the model and tokenizer
+            with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
+                pickle.dump(self.tokenizer, tokenizer_save_file)
             self.model.save(self.model_filename)
         else:
             self.logger.warning("No model to save.")
 
     def load_model(self):
-        self.logger.info("Loading Model...")
+        self.logger.info("Loading Model and Tokenizer...")
         if os.path.exists(self.model_filename):
-            self.model = tf.keras.models.load_model(self.model_filename)
-            self.logger.info("Model loaded successfully.")
+            # Load both the model and tokenizer
+            if os.path.exists(self.tokenizer_save_path):
+                with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
+                    self.tokenizer = pickle.load(tokenizer_load_file)
+                    self.tokenizer.num_words = self.max_vocab_size
+                    self.model = tf.keras.models.load_model(self.model_filename)
+                    self.logger.info("Model and tokenizer loaded successfully.")
+            else:
+                print("Tokenizer not found, making now...  ")
+                self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
+                self.tokenizer.num_words = self.max_vocab_size
+
         else:
-            self.logger.warning("No saved model found.")
+            self.logger.warning("No saved model found... Making now...  ")
             # Build the model (if not already built)
             if self.model is None:
                 self.build_model()
@@ -279,3 +279,4 @@ class BeamState:
         self.score = score
         self.sequence = sequence
         self.state = state
+
