@@ -69,7 +69,7 @@ def main():
 
         # Check if there are enough dialogue pairs for training
         if len(train_input) < 2 or len(train_target) < 2:
-            chatbot_trainer.logger.warning(f"Skipping training for Conversation {bookName} due to insufficient training data.")
+            chatbot_trainer.logger.warning(f"Skipping training for sentence in {bookName} due to insufficient training data.")
             continue
 
         # Train the model using the training data for this book
@@ -90,8 +90,8 @@ def main():
             padded_test_target_sequences,
             batch_size=chatbot_trainer.batch_size)
 
-        chatbot_trainer.logger.info(f"Test loss for Conversation {bookName}: {test_loss}")
-        chatbot_trainer.logger.info(f"Test accuracy for Conversation {bookName}: {test_accuracy}")
+        chatbot_trainer.logger.info(f"Test loss for Book; {bookName}: {test_loss}")
+        chatbot_trainer.logger.info(f"Test accuracy for Book; {bookName}: {test_accuracy}")
 
         # Save the model
         chatbot_trainer.save_model()
