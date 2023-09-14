@@ -27,28 +27,22 @@ def main():
             chatbot_trainer.tokenizer = pickle.load(tokenizer_load_file)
             chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
             chatbot_trainer.logger.info("Model and tokenizer loaded successfully.")
-            chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
+            chatbot_trainer.load_corpus(corpus_path)
     else:
         print("Tokenizer not found, making now...  ")
         chatbot_trainer.tokenizer = Tokenizer(oov_token="<OOV>", num_words=chatbot_trainer.max_vocab_size)  # Initialize the Tokenizer
         chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
-        chatbot_trainer.load_corpus(corpus_path)  # Use the load_corpus method to load the corpus
+        chatbot_trainer.load_corpus(corpus_path)
 
-    # Once all speakers' data is processed, you can fit the tokenizer
-    all_input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pairs in dialog_data.values() for pair in pairs]
-    all_target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pairs in dialog_data.values() for pair in pairs]
-    train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
-
-    chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
 
     # Train models for each speaker
-    for speaker, speaker_dialogue_pairs in dialog_data.items():
+    for speaker, speaker_dialog_pairs in dialog_data.items():
         # Load the model
         chatbot_trainer.load_model()
 
         # Separate the input and target texts
-        input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pair in speaker_dialogue_pairs]
-        target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pair in speaker_dialogue_pairs]
+        input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pair in speaker_dialog_pairs]
+        target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pair in speaker_dialog_pairs]
 
         # Split data into train and test for this speaker
         train_input, test_input, train_target, test_target = train_test_split(
@@ -58,6 +52,24 @@ def main():
         if len(train_input) < 2 or len(train_target) < 2:
             chatbot_trainer.logger.warning(f"Skipping training for Conversation {speaker} due to insufficient training data.")
             continue
+
+        # Once all speakers' data is processed, you can fit the tokenizer
+        all_input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pairs in dialog_data.values() for pair in pairs]
+        all_target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pairs in dialog_data.values() for pair in pairs]
+        train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
+
+        # Add "<start>" token to the word index if it doesn't already exist
+        if '<start>' not in chatbot_trainer.tokenizer.word_index:
+            chatbot_trainer.tokenizer.word_index['<start>'] = chatbot_trainer.tokenizer.num_words + 1
+            chatbot_trainer.tokenizer.num_words += 1
+
+        # Add "<end>" token to the word index if it doesn't already exist
+        if '<end>' not in chatbot_trainer.tokenizer.word_index:
+            chatbot_trainer.tokenizer.word_index['<end>'] = chatbot_trainer.tokenizer.num_words + 1
+            chatbot_trainer.tokenizer.num_words += 1
+
+        # Save Tokenizer and fit on texts
+        chatbot_trainer.save_tokenizer(train_input_texts + train_target_texts)
 
         # Train the model using the training data for this speaker
         conversation_id = f"'{speaker}'"
