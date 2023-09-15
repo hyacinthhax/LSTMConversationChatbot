@@ -32,6 +32,13 @@ def book_to_dict(book_filename):
     book_title = book_filename.split('.')[0]  # Extract the title from the filename
     book_dict[book_title] = pairs
 
+    # Write the dictionary to a .py file in Python format to verify data format and preprocess later
+    with open(f"{book_title}.py", "w", encoding="utf-8") as f:
+        f.write(f"{book_title}Sentences = [\n")
+        for pair in pairs:
+            f.write(f'    ("{pair[0]}", "{pair[1]}"),\n')
+        f.write("]\n")
+
     return book_dict
 
 def main():
@@ -127,3 +134,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
