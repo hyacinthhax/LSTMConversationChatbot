@@ -11,8 +11,15 @@ class DialogProcessor:
 
     @staticmethod
     def preprocess_text(text):
-        cleaned_text = text.replace('"', '')
+        # Remove <u> and </u> tags and their contents
+        cleaned_text = re.sub(r'<u>.*?</u>', '', text)
+
+        # Remove double quotes from the text
+        cleaned_text = cleaned_text.replace('"', '')
+
+        # Remove multiple spaces
         cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+
         return cleaned_text.lower()
 
     def process_dialogs(self):
