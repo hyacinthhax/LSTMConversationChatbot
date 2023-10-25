@@ -35,7 +35,7 @@ class ChatbotTrainer:
         # Initialize the corpus
         corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
         if os.path.exists(self.tokenizer_save_path):
-            with open(self.tokenizer_save_path, 'rb', encoding='utf-8') as tokenizer_load_file:
+            with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
                 self.tokenizer = pickle.load(tokenizer_load_file)
                 self.tokenizer.num_words = self.max_vocab_size
                 self.logger.info("Model and tokenizer loaded successfully.")
