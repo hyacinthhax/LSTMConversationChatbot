@@ -2,6 +2,7 @@ import os
 import re
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout
@@ -30,6 +31,20 @@ class ChatbotTrainer:
         self.batch_size = 64
         self.epochs = 10
         self.lstm_units = 128
+
+        # Initialize the corpus
+        corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
+        if os.path.exists(self.tokenizer_save_path):
+            with open(self.tokenizer_save_path, 'rb', encoding='utf-8') as tokenizer_load_file:
+                self.tokenizer = pickle.load(tokenizer_load_file)
+                self.tokenizer.num_words = self.max_vocab_size
+                self.logger.info("Model and tokenizer loaded successfully.")
+                self.load_corpus(corpus_path)
+        else:
+            print("Tokenizer not found, making now...  ")
+            self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
+            self.tokenizer.num_words = self.max_vocab_size
+            self.load_corpus(corpus_path)
 
 
     def plot_and_save_training_metrics(self, history, speaker):
@@ -92,14 +107,21 @@ class ChatbotTrainer:
 
     @staticmethod
     def preprocess_text(text):
-        # Add '<start>' to beginning and '<end>'
-        text = f"<start> {text} <end>"
-        # Remove double quotes from the text
-        cleaned_text = text.replace('"', '')
+        cleaned_text = []
+        for words in text:
+            # Remove double quotes from the text
+            words = words.replace('"', '')
+            words = words.replace('<', '')
+            words = words.replace('>', '')
+            cleaned_text.append(words)
 
+        cleaned_text = ''.join(cleaned_text)
         # Remove multiple spaces
         cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
-
+        cleaned_text = re.sub(r"[^A-Za-z0-9 ]+", "", cleaned_text)
+        # Add '<start>' to beginning and '<end>'
+        cleaned_text = f"<start> {cleaned_text} <end>"
+        # print(cleaned_text)       # Debug Line for human verification
         return cleaned_text.lower()
 
 
@@ -129,13 +151,13 @@ class ChatbotTrainer:
         # Encoder
         encoder_inputs = Input(shape=(max_seq_length,))
         encoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.10)(encoder_embedding)  # Added dropout
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.07)(encoder_embedding)  # Added dropout
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_inputs = Input(shape=(max_seq_length,))
         decoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.10)  # Added dropout
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.07)  # Added dropout
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
         decoder_dense = Dense(units=vocab_size, activation='softmax')
@@ -158,14 +180,6 @@ class ChatbotTrainer:
         if self.corpus is None or self.tokenizer is None:
             raise ValueError("Corpus or tokenizer is not initialized.")
 
-        # Tokenize input and target texts
-        input_sequences = self.tokenizer.texts_to_sequences(input_texts)
-        target_sequences = self.tokenizer.texts_to_sequences(target_texts)
-
-        max_seq_length = self.max_seq_length  # Specify your maximum sequence length
-        padded_input_sequences = pad_sequences(input_sequences, maxlen=max_seq_length, padding='post')
-        padded_target_sequences = pad_sequences(target_sequences, maxlen=max_seq_length, padding='post')
-
         # Compile the model (no need to specify learning_rate here, it's done in build_model)
         self.model.compile(optimizer='adam',
                            loss='sparse_categorical_crossentropy',  # Use sparse categorical cross-entropy
@@ -173,8 +187,8 @@ class ChatbotTrainer:
 
         # Train the model
         history = self.model.fit(
-            [padded_input_sequences, padded_target_sequences],
-            padded_target_sequences,
+            [input_texts, target_texts],
+            target_texts,
             batch_size=self.batch_size,
             epochs=self.epochs,
             validation_split=0.2
@@ -209,9 +223,19 @@ class ChatbotTrainer:
             if os.path.exists(self.tokenizer_save_path):
                 with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
                     self.tokenizer = pickle.load(tokenizer_load_file)
-                    self.tokenizer.num_words = self.max_vocab_size
-                    self.model = tf.keras.models.load_model(self.model_filename)
-                    self.logger.info("Model and tokenizer loaded successfully.")
+                
+                # Add "<start>" token to the word index if it doesn't already exist
+                if '<start>' not in self.tokenizer.word_index:
+                    self.tokenizer.word_index['<start>'] = self.tokenizer.num_words + 1
+                    self.tokenizer.num_words += 1
+
+                # Add "<end>" token to the word index if it doesn't already exist
+                if '<end>' not in self.tokenizer.word_index:
+                    self.tokenizer.word_index['<end>'] = self.tokenizer.num_words + 1
+                    self.tokenizer.num_words += 1
+                self.tokenizer.num_words = self.max_vocab_size
+                self.model = tf.keras.models.load_model(self.model_filename)
+                self.logger.info("Model and tokenizer loaded successfully.")
             else:
                 print("Tokenizer not found, making now...  ")
                 self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
@@ -224,16 +248,25 @@ class ChatbotTrainer:
                 self.build_model()
 
 
-    def beam_search(self, input_seq, beam_width=3, max_length=50):
-        start_token = self.tokenizer.word_index['<start> ']
-        end_token = self.tokenizer.word_index[' <end>']
+    def beam_search(self, input_seqs, beam_width=3, max_length=100):
+        start_token = self.tokenizer.word_index['<start>']
+        end_token = self.tokenizer.word_index['<end>']
+        
+        # Find the correct index of the LSTM layer
+        lstm_layer_index = None
+        for i, layer in enumerate(self.model.layers):
+            if isinstance(layer, LSTM):
+                print(f"LSTM layer found at index {i}: {layer}")
+                lstm_layer_index = i
 
-        # Initialize beam search with a single hypothesis
-        initial_state = self.model.layers[2].initialize_states(batch_size=self.batch_size)
-        initial_state = [initial_state, initial_state]
-        initial_beam = BeamState(score=0.0, sequence=[start_token], state=initial_state)
+        if lstm_layer_index is not None:
+            lstm_layer = self.model.layers[lstm_layer_index]
 
-        beam_states = [initial_beam]
+        # Initialize beam search with a single hypothesis for each input sequence
+        initial_states = [lstm_layer.get_initial_state(inputs=tf.constant([seq])) for seq in input_seqs]
+        initial_beams = [BeamState(score=0.0, sequence=[start_token], state=state) for state in initial_states]
+
+        beam_states = initial_beams
 
         # Perform beam search
         for _ in range(max_length):
@@ -243,41 +276,61 @@ class ChatbotTrainer:
                     # If the hypothesis ends, add it to the final hypotheses
                     new_beam_states.append(state)
                 else:
-                    # Generate next token probabilities and states
-                    decoder_input = np.array([state.sequence[-1]])
+                    # Generate next token probabilities and states for all input sequences
+                    decoder_input = tf.constant([[[state.sequence[-1]]] * len(input_seqs)])  # Repeat for all sequences
                     decoder_state = state.state
 
-                    decoder_output, decoder_state = self.model.layers[2](decoder_input, initial_state=decoder_state)
-                    token_probs = decoder_output[0, 0]
+                    decoder_output, decoder_state, _ = lstm_layer(decoder_input, initial_state=decoder_state)
+                    token_probs = decoder_output[:, 0, :]  # Slice for all sequences
 
-                    # Get the top beam_width tokens
-                    top_tokens = np.argsort(token_probs)[-beam_width:]
+                    # Get the top beam_width tokens for each input sequence
+                    top_tokens = np.argsort(token_probs, axis=-1)[:, -beam_width:]
 
-                    for token in top_tokens:
-                        new_seq = state.sequence + [token]
-                        new_score = state.score - np.log(token_probs[token])
-                        new_state = decoder_state
+                    for seq_idx in range(len(input_seqs)):
+                        for token in top_tokens[seq_idx]:
+                            new_seq = state.sequence + [token]
+                            new_score = state.score - np.log(token_probs[seq_idx, token])
+                            new_state = decoder_state
 
-                        new_beam_states.append(BeamState(score=new_score, sequence=new_seq, state=new_state))
+                            new_beam_states.append(BeamState(score=new_score, sequence=new_seq, state=new_state))
 
-            # Select top beam_width hypotheses
-            new_beam_states.sort(key=lambda x: x.score)
-            beam_states = new_beam_states[:beam_width]
+            # Select top beam_width hypotheses for each input sequence
+            new_beam_states = np.array(new_beam_states)
+            best_indices = np.argsort(new_beam_states[:, 0])[:beam_width]
 
-        # Get the hypothesis with the highest score
-        best_hypothesis = max(beam_states, key=lambda x: x.score)
-        return best_hypothesis.sequence[1:]  # Exclude the start token
+            beam_states = new_beam_states[best_indices]
+
+        # Get the hypotheses with the highest scores for each input sequence
+        best_hypotheses = [max(initial_beams, key=lambda x: x.score) for initial_beams in beam_states]
+        return [hypothesis.sequence[1:] for hypothesis in best_hypotheses]  # Exclude the start token
 
 
-    def generate_response(self, user_input, beam_width=3):
+    def generate_response(self, user_input, beam_width=3, batch_size=None):
         user_input = self.preprocess_text(user_input)
         user_input_seq = self.tokenizer.texts_to_sequences([user_input])
         user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
+        
+        if batch_size is None:
+            response_sequence = self.beam_search(user_input_seq, beam_width=beam_width)
+            response_text = self.tokenizer.sequences_to_texts([response_sequence])[0]
+            return response_text
+        else:
+            # Split input into batches and generate responses batch by batch
+            num_batches = len(user_input_seq) // batch_size
+            responses = []
 
-        response_sequence = self.beam_search(user_input_seq, beam_width=beam_width)
-        response_text = self.tokenizer.sequences_to_texts([response_sequence])[0]
+            for i in range(num_batches):
+                batch_start = i * batch_size
+                batch_end = (i + 1) * batch_size
+                batch_input = user_input_seq[batch_start:batch_end]
 
-        return response_text
+                batch_responses = self.beam_search(batch_input, beam_width=beam_width)
+                for response_seq in batch_responses:
+                    response_text = self.tokenizer.sequences_to_texts([response_seq])[0]
+                    responses.append(response_text)
+
+            return responses
+
 
 
 class BeamState:
