@@ -142,8 +142,6 @@ class ChatbotTrainer:
             if texts:
                 # Fit the tokenizer on the provided texts
                 self.tokenizer.fit_on_texts(texts)
-                for words in texts:
-                    self.vocab_size = len(self.tokenizer.word_index) + 1
 
             with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
                 pickle.dump(self.tokenizer, tokenizer_save_file)
