@@ -14,87 +14,58 @@ import convokit
 from processed_dialogs import dialog_data  # Import the dialog_data dictionary
 from playsound import playsound
 from chatbotTrainer import ChatbotTrainer  # Import your ChatbotTrainer class
-
+import pdb
 
 def main():
     print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
     chatbot_trainer = ChatbotTrainer()
+    all_input_texts = []
+    all_target_texts = []
 
-    # Initialize the corpus
-    corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
-    if os.path.exists(chatbot_trainer.tokenizer_save_path):
-        with open(chatbot_trainer.tokenizer_save_path, 'rb') as tokenizer_load_file:
-            chatbot_trainer.tokenizer = pickle.load(tokenizer_load_file)
-            chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
-            chatbot_trainer.logger.info("Model and tokenizer loaded successfully.")
-            chatbot_trainer.load_corpus(corpus_path)
-    else:
-        print("Tokenizer not found, making now...  ")
-        chatbot_trainer.tokenizer = Tokenizer(oov_token="<OOV>", num_words=chatbot_trainer.max_vocab_size)  # Initialize the Tokenizer
-        chatbot_trainer.tokenizer.num_words = chatbot_trainer.max_vocab_size
-        chatbot_trainer.load_corpus(corpus_path)
-
-
-    # Train models for each speaker
-    for speaker, speaker_dialog_pairs in dialog_data.items():
-        # Load the model
-        chatbot_trainer.load_model()
-
-        # Separate the input and target texts
-        input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pair in speaker_dialog_pairs]
-        target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pair in speaker_dialog_pairs]
-
-        # Split data into train and test for this speaker
-        train_input, test_input, train_target, test_target = train_test_split(
-            input_texts, target_texts, test_size=0.2, random_state=42)
-
-        # Check if there are enough dialogue pairs for training
-        if len(train_input) < 2 or len(train_target) < 2:
-            chatbot_trainer.logger.warning(f"Skipping training for Conversation {speaker} due to insufficient training data.")
-            continue
-
-        # Once all speakers' data is processed, you can fit the tokenizer
-        all_input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pairs in dialog_data.values() for pair in pairs]
-        all_target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pairs in dialog_data.values() for pair in pairs]
-        train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
-
-        # Add "<start>" token to the word index if it doesn't already exist
-        if '<start>' not in chatbot_trainer.tokenizer.word_index:
-            chatbot_trainer.tokenizer.word_index['<start>'] = chatbot_trainer.tokenizer.num_words + 1
-            chatbot_trainer.tokenizer.num_words += 1
-
-        # Add "<end>" token to the word index if it doesn't already exist
-        if '<end>' not in chatbot_trainer.tokenizer.word_index:
-            chatbot_trainer.tokenizer.word_index['<end>'] = chatbot_trainer.tokenizer.num_words + 1
-            chatbot_trainer.tokenizer.num_words += 1
-
-        # Save Tokenizer and fit on texts
-        chatbot_trainer.save_tokenizer(train_input_texts + train_target_texts)
-
-        # Train the model using the training data for this speaker
+    for speaker, dialog_pairs in dialog_data.items():
         conversation_id = f"'{speaker}'"
-        history = chatbot_trainer.train_model(train_input, train_target, conversation_id)
+        print(f"Speaker: {conversation_id}")
 
-        # Preprocess the test input data using the tokenizer
-        test_input_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_input)
-        padded_test_input_sequences = pad_sequences(test_input_sequences, maxlen=chatbot_trainer.max_seq_length, padding='post')
+        # Initialize lists for this speaker's data
+        speaker_input_texts = []
+        speaker_target_texts = []
 
-        # Preprocess the test target data using the tokenizer
-        test_target_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_target)
-        padded_test_target_sequences = pad_sequences(test_target_sequences, maxlen=chatbot_trainer.max_seq_length, padding='post')
+        for input_text, target_text in dialog_pairs:
+            if input_text != "":
+                # pdb.set_trace()
+                # Tokenize the input and target text into words
+                input_words = chatbot_trainer.preprocess_text(input_text).split()
+                target_words = chatbot_trainer.preprocess_text(target_text).split()
 
-        # Evaluate the model on the preprocessed test data
-        test_loss, test_accuracy = chatbot_trainer.model.evaluate(
-            [padded_test_input_sequences, padded_test_target_sequences],
-            padded_test_target_sequences,
-            batch_size=chatbot_trainer.batch_size)
+                # Add unique words from input text to the vocabulary
+                input_list = []
+                for word in input_words:
+                    input_list.append(word)
+                    if word not in chatbot_trainer.vocabularyList:
+                        chatbot_trainer.vocabularyList.append(word)
 
-        chatbot_trainer.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
-        chatbot_trainer.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
+                input_words = ' '.join(input_list)
 
-        # Save the model
-        chatbot_trainer.save_model()
+                # Add unique words from target text to the vocabulary
+                target_list = []
+                for word in target_words:
+                    target_list.append(word)
+                    if word not in chatbot_trainer.vocabularyList:
+                        chatbot_trainer.vocabularyList.append(word)
 
+                target_words = ' '.join(target_list)
+
+                speaker_input_texts.append(input_words)
+                all_input_texts.append(input_words)
+                speaker_target_texts.append(target_words)
+                all_target_texts.append(target_words)
+
+                # save_tokenizer takes a list of preprocessed words that are alone for each dialog training and target data
+                chatbot_trainer.save_tokenizer(input_words)
+                chatbot_trainer.save_tokenizer(target_words)
+
+        # Train the model using the preprocessed training data for this speaker
+        chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
 
 
 if __name__ == "__main__":
