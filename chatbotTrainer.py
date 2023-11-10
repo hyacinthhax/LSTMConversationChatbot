@@ -25,12 +25,13 @@ class ChatbotTrainer:
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.logger = self.setup_logger()  # Initialize your logger here
-        self.embedding_dim = 100  # Define the embedding dimension here
+        self.embedding_dim = 300  # Define the embedding dimension here
         self.max_seq_length = 100  # Replace with your desired sequence length
         self.learning_rate = 0.001
         self.batch_size = 64
         self.epochs = 10
         self.lstm_units = 128
+        self.vocabularyList = []
 
         # Initialize the corpus
         corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
@@ -40,11 +41,22 @@ class ChatbotTrainer:
                 self.tokenizer.num_words = self.max_vocab_size
                 self.logger.info("Model and tokenizer loaded successfully.")
                 self.load_corpus(corpus_path)
-        else:
+        elif not os.path.exists(self.tokenizer_save_path):
             print("Tokenizer not found, making now...  ")
             self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
-            self.tokenizer.num_words = self.max_vocab_size
             self.load_corpus(corpus_path)
+
+        # Add "<start>" token to the word index if it doesn't already exist
+        if '<start>' not in self.tokenizer.word_index:
+            self.tokenizer.word_index['<start>'] = self.tokenizer.num_words + 1
+            self.tokenizer.num_words += 1
+            self.vocab_size = len(self.tokenizer.word_index) + 1
+
+        # Add "<end>" token to the word index if it doesn't already exist
+        if '<end>' not in self.tokenizer.word_index:
+            self.tokenizer.word_index['<end>'] = self.tokenizer.num_words + 1
+            self.tokenizer.num_words += 1
+            self.vocab_size = len(self.tokenizer.word_index) + 1
 
 
     def plot_and_save_training_metrics(self, history, speaker):
@@ -105,8 +117,7 @@ class ChatbotTrainer:
         return logger
 
 
-    @staticmethod
-    def preprocess_text(text):
+    def preprocess_text(self, text):
         cleaned_text = []
         for words in text:
             # Remove double quotes from the text
@@ -119,20 +130,27 @@ class ChatbotTrainer:
         # Remove multiple spaces
         cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
         cleaned_text = re.sub(r"[^A-Za-z0-9 ]+", "", cleaned_text)
+        for words in cleaned_text.split():
+            self.vocabularyList.append(words)
         # Add '<start>' to beginning and '<end>'
         cleaned_text = f"<start> {cleaned_text} <end>"
-        # print(cleaned_text)       # Debug Line for human verification
         return cleaned_text.lower()
 
 
     def save_tokenizer(self, texts=None):
-        if texts:
-            # Fit the tokenizer on the provided texts
-            self.tokenizer.fit_on_texts(texts)
-
         if self.tokenizer:
+            if texts:
+                # Fit the tokenizer on the provided texts
+                self.tokenizer.fit_on_texts(texts)
+                for words in texts:
+                    self.vocab_size = len(self.tokenizer.word_index) + 1
+
             with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
                 pickle.dump(self.tokenizer, tokenizer_save_file)
+
+            # Update vocab_size
+            self.vocab_size = len(self.tokenizer.word_index) + 1  # +1 for padding token
+
         else:
             self.logger.warning("No tokenizer to save.")
 
@@ -143,24 +161,22 @@ class ChatbotTrainer:
         if self.tokenizer is None:
             raise ValueError("Tokenizer is not initialized.")
 
-        vocab_size = len(self.tokenizer.word_index) + 1  # +1 for padding token
-
         max_seq_length = self.max_seq_length
         learning_rate = self.learning_rate
 
         # Encoder
         encoder_inputs = Input(shape=(max_seq_length,))
-        encoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.07)(encoder_embedding)  # Added dropout
+        encoder_embedding = Embedding(input_dim=self.vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True)(encoder_embedding)  # Added dropout
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_inputs = Input(shape=(max_seq_length,))
-        decoder_embedding = Embedding(input_dim=vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.07)  # Added dropout
+        decoder_embedding = Embedding(input_dim=self.vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True)  # Added dropout
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
-        decoder_dense = Dense(units=vocab_size, activation='softmax')
+        decoder_dense = Dense(units=self.vocab_size, activation='softmax')
         decoder_outputs = decoder_dense(decoder_outputs)
 
         # Create the model
@@ -168,45 +184,53 @@ class ChatbotTrainer:
 
         # Compile the model
         self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-                           loss='categorical_crossentropy',
+                           loss='sparse_categorical_crossentropy',
                            metrics=['accuracy'])
 
         self.logger.info("Model built successfully.")
 
 
-    def train_model(self, input_texts, target_texts, conversation_id):
+    def train_model(self, input_texts, target_texts, conversation_id, speaker):
+        self.load_model_file()
         self.logger.info("Training Model...")
 
         if self.corpus is None or self.tokenizer is None:
             raise ValueError("Corpus or tokenizer is not initialized.")
 
-        # Compile the model (no need to specify learning_rate here, it's done in build_model)
-        self.model.compile(optimizer='adam',
-                           loss='sparse_categorical_crossentropy',  # Use sparse categorical cross-entropy
-                           metrics=['accuracy'])
+        # Preprocess the training data using the tokenizer
+        input_sequences = self.tokenizer.texts_to_sequences(input_texts)
+        padded_input_sequences = pad_sequences(input_sequences, maxlen=self.max_seq_length, padding='post')
+        target_sequences = self.tokenizer.texts_to_sequences(target_texts)
+        padded_target_sequences = pad_sequences(target_sequences, maxlen=self.max_seq_length, padding='post')
+
+        # Split this speaker's data into training and test sets
+        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=0.2, random_state=42)
 
         # Train the model
         history = self.model.fit(
-            [input_texts, target_texts],
-            target_texts,
+            [train_input, train_target],
+            train_target,
             batch_size=self.batch_size,
             epochs=self.epochs,
-            validation_split=0.2
+            validation_data=([test_input, test_target], test_target)
         )
+
+        # Evaluate the model on the test data
+        test_loss, test_accuracy = self.model.evaluate([test_input, test_target], test_target, batch_size=self.batch_size)
+
+
+        # Save the model
+        self.save_model()
 
         # Log training metrics
         self.logger.info("Training metrics:")
-        for key, value in history.history.items():
-            self.logger.info(f"{key}: {value}")
-
         self.logger.info("Model trained successfully.")
-        self.save_model()
 
         # Save training metrics plot as an image and get the filename
         plot_filename = self.plot_and_save_training_metrics(history, conversation_id)
         self.logger.info(f"Training metrics plot saved as {plot_filename}")
-
-        return history  # Return the history object
+        self.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
+        self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
 
 
     def save_model(self):
@@ -216,7 +240,7 @@ class ChatbotTrainer:
         else:
             self.logger.warning("No model to save.")
 
-    def load_model(self):
+    def load_model_file(self):
         self.logger.info("Loading Model and Tokenizer...")
         if os.path.exists(self.model_filename):
             # Load both the model and tokenizer
@@ -236,7 +260,7 @@ class ChatbotTrainer:
                 self.tokenizer.num_words = self.max_vocab_size
                 self.model = tf.keras.models.load_model(self.model_filename)
                 self.logger.info("Model and tokenizer loaded successfully.")
-            else:
+            elif not os.path.exists(self.tokenizer_save_path):
                 print("Tokenizer not found, making now...  ")
                 self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
                 self.tokenizer.num_words = self.max_vocab_size
@@ -335,7 +359,13 @@ class ChatbotTrainer:
 
 class BeamState:
     def __init__(self, score, sequence, state):
+        if not isinstance(score, (float, int)):
+            print(f"Warning: Invalid score type: {type(score)}")
+        if not isinstance(sequence, list):
+            print(f"Warning: Invalid sequence type: {type(sequence)}")
+        if not isinstance(state, np.ndarray):  # Adjust the type accordingly
+            print(f"Warning: Invalid state type: {type(state)}")
+
         self.score = score
         self.sequence = sequence
         self.state = state
-
