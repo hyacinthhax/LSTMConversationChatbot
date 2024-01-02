@@ -7,6 +7,7 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout
 from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import logging
@@ -19,44 +20,41 @@ from playsound import playsound
 class ChatbotTrainer:
     def __init__(self):
         self.corpus = None
-        self.max_vocab_size = max_vocab_size = 50000
+        self.max_vocab_size = 10000
         self.model = None
         self.model_filename = "chatbot_model.h5"
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.logger = self.setup_logger()  # Initialize your logger here
         self.embedding_dim = 300  # Define the embedding dimension here
-        self.max_seq_length = 100  # Replace with your desired sequence length
-        self.learning_rate = 0.001
-        self.batch_size = 64
-        self.epochs = 10
-        self.lstm_units = 128
+        self.max_seq_length = 200  # Replace with your desired sequence length
+        self.learning_rate = 0.003
+        self.batch_size = 128
+        self.epochs = 3
+        self.lstm_units = 256
         self.vocabularyList = []
 
-        # Initialize the corpus
-        corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
         if os.path.exists(self.tokenizer_save_path):
             with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
                 self.tokenizer = pickle.load(tokenizer_load_file)
                 self.tokenizer.num_words = self.max_vocab_size
                 self.logger.info("Model and tokenizer loaded successfully.")
-                self.load_corpus(corpus_path)
+
         elif not os.path.exists(self.tokenizer_save_path):
             print("Tokenizer not found, making now...  ")
             self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
-            self.load_corpus(corpus_path)
 
-        # Add "<start>" token to the word index if it doesn't already exist
-        if '<start>' not in self.tokenizer.word_index:
-            self.tokenizer.word_index['<start>'] = self.tokenizer.num_words + 1
-            self.tokenizer.num_words += 1
-            self.vocab_size = len(self.tokenizer.word_index) + 1
+            # Add "<start>" token to the word index if it doesn't already exist
+            if '<start>' not in self.tokenizer.word_index:
+                self.tokenizer.word_index['<start>'] = self.tokenizer.num_words + 1
+                self.tokenizer.num_words += 1
+                self.max_vocab_size = len(self.tokenizer.word_index) + 1
 
-        # Add "<end>" token to the word index if it doesn't already exist
-        if '<end>' not in self.tokenizer.word_index:
-            self.tokenizer.word_index['<end>'] = self.tokenizer.num_words + 1
-            self.tokenizer.num_words += 1
-            self.vocab_size = len(self.tokenizer.word_index) + 1
+            # Add "<end>" token to the word index if it doesn't already exist
+            if '<end>' not in self.tokenizer.word_index:
+                self.tokenizer.word_index['<end>'] = self.tokenizer.num_words + 1
+                self.tokenizer.num_words += 1
+                self.max_vocab_size = len(self.tokenizer.word_index) + 1
 
 
     def plot_and_save_training_metrics(self, history, speaker):
@@ -141,13 +139,12 @@ class ChatbotTrainer:
         if self.tokenizer:
             if texts:
                 # Fit the tokenizer on the provided texts
-                self.tokenizer.fit_on_texts(texts)
+                self.tokenizer.fit_on_texts(self.vocabularyList)
+            
+            self.tokenizer.num_words = self.max_vocab_size
 
             with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
                 pickle.dump(self.tokenizer, tokenizer_save_file)
-
-            # Update vocab_size
-            self.vocab_size = len(self.tokenizer.word_index) + 1  # +1 for padding token
 
         else:
             self.logger.warning("No tokenizer to save.")
@@ -164,24 +161,24 @@ class ChatbotTrainer:
 
         # Encoder
         encoder_inputs = Input(shape=(max_seq_length,))
-        encoder_embedding = Embedding(input_dim=self.vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True)(encoder_embedding)  # Added dropout
+        encoder_embedding = Embedding(input_dim=self.max_vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.13, recurrent_dropout=0.1)(encoder_embedding)
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_inputs = Input(shape=(max_seq_length,))
-        decoder_embedding = Embedding(input_dim=self.vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True)  # Added dropout
+        decoder_embedding = Embedding(input_dim=self.max_vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.13, recurrent_dropout=0.1)
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
-        decoder_dense = Dense(units=self.vocab_size, activation='softmax')
+        decoder_dense = Dense(units=self.max_vocab_size, activation='softmax')
         decoder_outputs = decoder_dense(decoder_outputs)
 
         # Create the model
         self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
 
         # Compile the model
-        self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        self.model.compile(optimizer=Adam(learning_rate=learning_rate),
                            loss='sparse_categorical_crossentropy',
                            metrics=['accuracy'])
 
@@ -194,6 +191,9 @@ class ChatbotTrainer:
 
         if self.corpus is None or self.tokenizer is None:
             raise ValueError("Corpus or tokenizer is not initialized.")
+        
+        # save_tokenizer takes a list of preprocessed words that are alone for each dialog training data
+        self.save_tokenizer(input_texts)
 
         # Preprocess the training data using the tokenizer
         input_sequences = self.tokenizer.texts_to_sequences(input_texts)
@@ -242,26 +242,8 @@ class ChatbotTrainer:
         self.logger.info("Loading Model and Tokenizer...")
         if os.path.exists(self.model_filename):
             # Load both the model and tokenizer
-            if os.path.exists(self.tokenizer_save_path):
-                with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
-                    self.tokenizer = pickle.load(tokenizer_load_file)
-                
-                # Add "<start>" token to the word index if it doesn't already exist
-                if '<start>' not in self.tokenizer.word_index:
-                    self.tokenizer.word_index['<start>'] = self.tokenizer.num_words + 1
-                    self.tokenizer.num_words += 1
-
-                # Add "<end>" token to the word index if it doesn't already exist
-                if '<end>' not in self.tokenizer.word_index:
-                    self.tokenizer.word_index['<end>'] = self.tokenizer.num_words + 1
-                    self.tokenizer.num_words += 1
-                self.tokenizer.num_words = self.max_vocab_size
-                self.model = tf.keras.models.load_model(self.model_filename)
-                self.logger.info("Model and tokenizer loaded successfully.")
-            elif not os.path.exists(self.tokenizer_save_path):
-                print("Tokenizer not found, making now...  ")
-                self.tokenizer = Tokenizer(oov_token="<OOV>", num_words=self.max_vocab_size)  # Initialize the Tokenizer
-                self.tokenizer.num_words = self.max_vocab_size
+            self.model = tf.keras.models.load_model(self.model_filename)
+            self.logger.info("Model and tokenizer loaded successfully.")
 
         else:
             self.logger.warning("No saved model found... Making now...  ")
