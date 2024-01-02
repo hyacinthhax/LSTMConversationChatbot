@@ -3,9 +3,6 @@ import numpy as np
 import pickle
 from chatbotTrainer import ChatbotTrainer  # Import the ChatbotTrainer class
 
-
-
-
 model_path = "chatbot_model.h5"
 max_seq_length = 100
 chatbot_trainer = ChatbotTrainer()
@@ -17,14 +14,17 @@ with open(tokenizer_load_path, 'rb') as tokenizer_load_file:
     chatbot_trainer.tokenizer = loaded_tokenizer
     print("Number of words in loaded tokenizer:", len(chatbot_trainer.tokenizer.word_index))
 
-
-chatbot_trainer.load_model()
+chatbot_trainer.load_model_file()
 print("Chatbot is ready. Type 'exit' to end the conversation.")
 
-
 while True:
-    user_input = input("You: ")
-    if user_input.lower() == "exit":
+    user_input = input("You: ").lower()
+
+    if not input_text:
+    print("Chatbot: I'm sorry, I don't understand your input.")
+    continue
+
+    if user_input == "exit":
         print("Chatbot: Goodbye!")
         break
     
@@ -34,4 +34,8 @@ while True:
         continue
     
     response = chatbot_trainer.generate_response(input_text)
-    print(f"Chatbot: {response}")
+
+    # Convert the response sequence back to text
+    response_text = chatbot_trainer.tokenizer.sequences_to_texts([response])[0]
+
+    print(f"Chatbot: {response_text}")
