@@ -10,10 +10,12 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import logging
 import pickle
+  # Import the dialog_data dictionary
 from playsound import playsound
-from chatbotTrainer import ChatbotTrainer
+from chatbotTrainer import ChatbotTrainer  # Import your ChatbotTrainer class
 import nltk
 from nltk.tokenize import sent_tokenize
+
 
 nltk.download('punkt')  # Download the sentence tokenizer model if not already installed
 
@@ -31,11 +33,10 @@ def book_to_dict(book_filename):
     pairs = [(sentences[i], sentences[i + 1]) for i in range(len(sentences) - 1)]
 
     # Create the dictionary with book title as the key
-    book_title = os.path.splitext(os.path.basename(book_filename))[0]  # Extract the title from the filename
+    book_title = book_filename.split('.')[0]  # Extract the title from the filename
     book_dict[book_title] = pairs
 
     return book_dict
-
 
 def main():
     print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
@@ -49,8 +50,7 @@ def main():
     # Once all book name data is processed, you can fit the tokenizer
     all_input_texts = [chatbot_trainer.preprocess_text(pair[0]) for pairs in dialog_data.values() for pair in pairs]
     all_target_texts = [chatbot_trainer.preprocess_text(pair[1]) for pairs in dialog_data.values() for pair in pairs]
-    train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(
-        all_input_texts, all_target_texts, test_size=0.2, random_state=42)
+    train_input_texts, test_input_texts, train_target_texts, test_target_texts = train_test_split(all_input_texts, all_target_texts, test_size=0.2, random_state=42)
 
     chatbot_trainer.tokenizer.fit_on_texts(train_input_texts + train_target_texts)
 
@@ -69,8 +69,7 @@ def main():
 
         # Check if there are enough dialogue pairs for training
         if len(train_input) < 2 or len(train_target) < 2:
-            chatbot_trainer.logger.warning(
-                f"Skipping training for sentence in {bookName} due to insufficient training data.")
+            chatbot_trainer.logger.warning(f"Skipping training for sentence in {bookName} due to insufficient training data.")
             continue
 
         # Train the model using the training data for this book
@@ -79,13 +78,11 @@ def main():
 
         # Preprocess the test input data using the tokenizer
         test_input_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_input)
-        padded_test_input_sequences = pad_sequences(test_input_sequences, maxlen=chatbot_trainer.max_seq_length,
-                                                    padding='post')
+        padded_test_input_sequences = pad_sequences(test_input_sequences, maxlen=chatbot_trainer.max_seq_length, padding='post')
 
         # Preprocess the test target data using the tokenizer
         test_target_sequences = chatbot_trainer.tokenizer.texts_to_sequences(test_target)
-        padded_test_target_sequences = pad_sequences(test_target_sequences, maxlen=chatbot_trainer.max_seq_length,
-                                                     padding='post')
+        padded_test_target_sequences = pad_sequences(test_target_sequences, maxlen=chatbot_trainer.max_seq_length, padding='post')
 
         # Evaluate the model on the preprocessed test data
         test_loss, test_accuracy = chatbot_trainer.model.evaluate(
@@ -119,7 +116,6 @@ def main():
         # Update context
         recent_user_input = user_input
         recent_chatbot_response = response
-
 
 if __name__ == "__main__":
     main()

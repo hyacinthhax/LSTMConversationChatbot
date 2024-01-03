@@ -17,9 +17,9 @@ from chatbotTrainer import ChatbotTrainer  # Import your ChatbotTrainer class
 import pdb
 
 
-def run(chatbot_trainer, speakerList, all_input_texts=[], all_target_texts=[]):
+def run(chatbot_trainer, all_input_texts=[], all_target_texts=[]):
     for speaker, dialog_pairs in dialog_data.items():
-        if speaker not in speakerList:
+        if speaker not in chatbot_trainer.speakerList:
             conversation_id = f"'{speaker}'"
             print(f"Speaker: {conversation_id}")
 
@@ -63,7 +63,6 @@ def run(chatbot_trainer, speakerList, all_input_texts=[], all_target_texts=[]):
 
 
 def main():
-    speakerList = []
     print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
     chatbot_trainer = ChatbotTrainer()
 
@@ -72,13 +71,10 @@ def main():
     chatbot_trainer.load_corpus(corpus_path)
 
     try:
-        run(chatbot_trainer, speakerList)
+        run(chatbot_trainer)
 
     except Exception as e:
         print(e)
-        chatbot_trainer.max_vocab_size += 10000
-        run(chatbot_trainer, speakerList)
-
 
     
 
