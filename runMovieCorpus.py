@@ -28,34 +28,23 @@ def run(chatbot_trainer, all_input_texts=[], all_target_texts=[]):
             speaker_target_texts = []
 
             for input_text, target_text in dialog_pairs:
-                if input_text != "":
-
+                if input_text != "" and target_text != "":
                     # pdb.set_trace()
                     # Tokenize the input and target text into words
-                    input_words = chatbot_trainer.preprocess_text(input_text).split()
-                    target_words = chatbot_trainer.preprocess_text(target_text).split()
+                    cleaned_input = chatbot_trainer.preprocess_text(input_text)
+                    cleaned_target = chatbot_trainer.preprocess_text(target_text)
 
-                    # Add unique words from input text to the vocabulary
-                    input_list = []
-                    for word in input_words:
-                        input_list.append(word)
+                    speaker_input_texts.append(cleaned_input)
+                    all_input_texts.append(cleaned_input)
+                    speaker_target_texts.append(cleaned_target)
+                    all_target_texts.append(cleaned_target)
 
-                    input_words = ' '.join(input_list)
+            if len(speaker_input_texts) > 3:
+                # Train the model using the preprocessed training data for this speaker
+                chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
 
-                    # Add unique words from target text to the vocabulary
-                    target_list = []
-                    for word in target_words:
-                        target_list.append(word)
-
-                    target_words = ' '.join(target_list)
-
-                    speaker_input_texts.append(input_words)
-                    all_input_texts.append(input_words)
-                    speaker_target_texts.append(target_words)
-                    all_target_texts.append(target_words)
-
-            # Train the model using the preprocessed training data for this speaker
-            chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
+            else:
+                print(f"\nSkipped {speaker} for not providing enough data...  \n")
 
         else:
             print(f"{speaker} Skipped for being on List.")

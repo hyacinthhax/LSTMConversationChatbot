@@ -18,24 +18,16 @@ chatbot_trainer.load_model_file()
 print("Chatbot is ready. Type 'exit' to end the conversation.")
 
 while True:
-    user_input = input("You: ").lower()
-
-    if not input_text:
-    print("Chatbot: I'm sorry, I don't understand your input.")
-    continue
-
-    if user_input == "exit":
+    user_input = input("You: ")
+    if user_input.lower() == "exit":
         print("Chatbot: Goodbye!")
         break
-    
+
     input_text = chatbot_trainer.preprocess_text(user_input)
     if not input_text:
         print("Chatbot: I'm sorry, I don't understand your input.")
         continue
-    
-    response = chatbot_trainer.generate_response(input_text)
 
-    # Convert the response sequence back to text
-    response_text = chatbot_trainer.tokenizer.sequences_to_texts([response])[0]
+    response = chatbot_trainer.generate_response_with_beam_search(input_text)
 
-    print(f"Chatbot: {response_text}")
+    print(f"Alan: {response_text}")
