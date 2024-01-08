@@ -1,5 +1,6 @@
 # Seq2SeqChatbot
 A Seq2Seq Model based on cornell movies also convokit. It learns all responses and returns in chat.
+As of 1/7/2024 training is achievable, but adding beam_search broke it. I'm working on it daily
 
 Make sure to change the Directory!
 
