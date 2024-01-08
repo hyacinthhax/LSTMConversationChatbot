@@ -1,3 +1,4 @@
+# This File is outdated and will need to be refitted for curent version.
 import os
 import re
 import numpy as np
