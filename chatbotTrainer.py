@@ -15,6 +15,7 @@ import pickle
 import convokit
 from processed_dialogs import dialog_data  # Import the dialog_data dictionary
 from playsound import playsound
+import time
 
 
 class BeamSearchHelper:
@@ -46,7 +47,7 @@ class BeamSearchHelper:
         return logger
 
 
-    def beam_search(self, input_seqs, beam_width=3, max_length=100):
+    def beam_search(self, input_seqs, beam_width=3):
         # Find the correct index of the LSTM layer
         lstm_layer_index = None
         for i, layer in enumerate(self.model.layers):
@@ -59,23 +60,28 @@ class BeamSearchHelper:
 
         # Initialize beam search with a single hypothesis for each input sequence
         initial_states = [lstm_layer.get_initial_state(inputs=tf.constant([seq])) for seq in input_seqs]
-        initial_beams = [BeamState(state=state, score=0.0, sequence=[start_token], logger=self.logger) for state in initial_states]
+        initial_beams = [BeamState(state=state, score=0.0, sequence=[input_seqs], logger=self.logger) for state in initial_states]
 
         beam_states = initial_beams
 
         # Perform beam search
-        for _ in range(max_length):
+        for _ in range(self.max_seq_length):
             new_beam_states = []
             for state in beam_states:
-                if state.sequence[-1] == end_token:
+                if state.sequence[-1][-1] == self.tokenizer.end_token:
                     # If the hypothesis ends, add it to the final hypotheses
                     new_beam_states.append(state)
                 else:
                     # Generate next token probabilities and states for all input sequences
-                    decoder_input = tf.constant([[[state.sequence[-1]]] * len(input_seqs)])  # Repeat for all sequences
+                    decoder_input_token = tf.constant([[self.tokenizer.word_index[state.sequence[-1]]]] * len(input_seqs))
+                    decoder_input_token = pad_sequences(decoder_input_token, maxlen=self.max_seq_length, padding='post', truncating='post')
+                    
+                    decoder_input = tf.constant(decoder_input_token, dtype=tf.float32)
+
                     decoder_state = state.state
 
                     decoder_output, decoder_state, _ = lstm_layer(decoder_input, initial_state=decoder_state)
+                    
                     token_probs = decoder_output[:, 0, :]  # Slice for all sequences
 
                     # Get the top-k tokens for each input sequence
@@ -159,7 +165,7 @@ class ChatbotTrainer:
                     self.tokenizer.num_words += 1
 
             self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
-            self.save_tokenizer()
+            self.save_tokenizer(self.vocabularyList)
 
         self.load_model_file()
 
@@ -309,8 +315,10 @@ class ChatbotTrainer:
 
         # save_tokenizer and update num_words before training
         for lines in input_texts:
-            self.save_tokenizer(lines.split())
-        self.logger.info(f"Word Counts:  {self.tokenizer.word_counts}")
+            self.save_tokenizer(lines.split(" "))
+        
+        # Debug log line
+        # self.logger.info(f"Word Counts:  {self.tokenizer.word_counts}")
 
         # Preprocess the training data using the tokenizer
         input_sequences = self.tokenizer.texts_to_sequences(input_texts)
@@ -343,6 +351,8 @@ class ChatbotTrainer:
         self.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
         self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
 
+        time.sleep(3)
+
 
     def save_model(self):
         self.logger.info("Saving Model...")
@@ -371,11 +381,8 @@ class ChatbotTrainer:
         user_input_seq = self.tokenizer.texts_to_sequences([user_input])
         user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
 
-        # Initialize target_seq with the index of <start> token
-        start_token_index = self.tokenizer.word_index['<start>']
-        end_token_index = self.tokenizer.word_index['<end>']
-        target_seq = np.zeros((1, 1))
-        target_seq[0, 0] = start_token_index
+        self.tokenizer.start_token = self.vocabularyList[0]
+        self.tokenizer.end_token = self.vocabularyList[1]
 
         reverse_target_char_index = dict(map(reversed, self.tokenizer.word_index.items()))
 
@@ -383,8 +390,6 @@ class ChatbotTrainer:
 
         # Perform beam search
         response_sequences = beamHelper.beam_search(user_input_seq, beam_width=beam_width)
-
-        token_index = ["<start>", "<end>", "<OOV>"]
 
         # Convert sequences to texts (MANUALLY)
         response_texts = []

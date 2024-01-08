@@ -4,8 +4,8 @@ import pickle
 from chatbotTrainer import ChatbotTrainer  # Import the ChatbotTrainer class
 
 model_path = "chatbot_model.h5"
-max_seq_length = 100
 chatbot_trainer = ChatbotTrainer()
+max_seq_length = chatbot_trainer.max_seq_length
 
 # Load the saved tokenizer
 tokenizer_load_path = "chatBotTokenizer.pkl"  # Update with the actual path to your saved tokenizer
