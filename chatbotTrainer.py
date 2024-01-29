@@ -1,12 +1,13 @@
 import os
 import re
 import numpy as np
+from itertools import chain
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
@@ -126,23 +127,27 @@ class ChatbotTrainer:
         self.corpus = None
         self.all_vocab_size = 0
         self.model = None
-        self.model_filename = "chatbot_model.h5"
+        self.model_filename = "chatbot_model.keras"
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.logger = self.setup_logger()  # Initialize your logger here
-        self.embedding_dim = 100  # Define the embedding dimension here
+        self.embedding_dim = 100  # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH
         self.max_seq_length = 100  # Replace with your desired sequence length
-        self.learning_rate = 0.003
-        self.batch_size = 128
-        self.epochs = 3
-        self.lstm_units = 256
-        self.vocabularyList = ['<start>', '<end>', '<OOV>']
+        self.learning_rate = 0.001
+        self.batch_size = 256
+        self.epochs = 10
+        self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
+        self.max_vocab_size = len(self.vocabularyList)
+        self.lstm_units = 2457
+        self.perceivedMax = 10000
         self.speakerList = []
         self.encoder_model = None
-        self.encoder_inputs = None
-        self.decoder_inputs = None
+        self.encoder_inputs = Input(shape=(self.max_seq_length,))
+        self.decoder_inputs = Input(shape=(self.max_seq_length,))
         self.decoder_outputs = None
         self.decoder_model = None
+        self. encoder_filename = "encoder.keras"
+        self.decoder_filename = "decoder.keras"
 
         # Import Speakers
         with open('trained_speakers.txt', 'r') as file:
@@ -152,22 +157,28 @@ class ChatbotTrainer:
             with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
                 self.tokenizer = pickle.load(tokenizer_load_file)
                 self.all_vocab_size = self.tokenizer.num_words
-                self.logger.info("Model and tokenizer loaded successfully.")
+                self.logger.info("Tokenizer loaded successfully.")
+                print("Number of words in loaded tokenizer:", len(self.tokenizer.word_index))
         else:
             self.logger.warning("Tokenizer not found, making now...  ")
-            self.tokenizer = Tokenizer(num_words=0, oov_token="<OOV>")  # Initialize the Tokenizer
+            self.tokenizer = Tokenizer(num_words=None)  # Initialize the Tokenizer
 
             # Save '<OOV>', '<start>', and '<end>' to word index
+            self.tokenizer.num_words = 0
             for token in self.vocabularyList:
                 if token not in self.tokenizer.word_index:
                     self.tokenizer.word_index[token] = self.tokenizer.num_words
                     self.all_vocab_size += 1
                     self.tokenizer.num_words += 1
 
+            # Set Tokenizer Values:
+            self.tokenizer.num_words = len(self.tokenizer.word_index)
+            self.tokenizer.oov_token = "<OOV>"
+
             self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
             self.save_tokenizer(self.vocabularyList)
 
-        self.load_model_file()
+        self.load_model_file(self.model_filename)
 
     def plot_and_save_training_metrics(self, history, speaker):
         # Plot training metrics such as loss and accuracy
@@ -239,24 +250,33 @@ class ChatbotTrainer:
         # Remove multiple spaces
         cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
         cleaned_text = re.sub(r"[^A-Za-z0-9 ]+", "", cleaned_text)
-        for words in cleaned_text.split():
-            self.vocabularyList.append(words)
         # Add '<start>' to beginning and '<end>'
         cleaned_text = f"<start> {cleaned_text} <end>"
         return cleaned_text.lower()
 
+
     def save_tokenizer(self, texts=None):
         if self.tokenizer:
             if texts:
-                self.tokenizer.fit_on_texts(texts)
+                for token in texts:
+                    if token not in self.tokenizer.word_index:
+                        if token not in self.vocabularyList:
+                            self.all_vocab_size += 1
+                            self.tokenizer.num_words += 1
+                            self.tokenizer.word_index[token] = self.tokenizer.num_words
+                            print(f"Word: {token}\nIndex: {self.tokenizer.num_words}")
+                            self.vocabularyList.append(token)
 
-            self.tokenizer.num_words = self.all_vocab_size
+                self.tokenizer.fit_on_texts(texts)
 
             with open(self.tokenizer_save_path, 'wb') as tokenizer_save_file:
                 pickle.dump(self.tokenizer, tokenizer_save_file)
 
+            self.tokenizer.num_words = len(self.tokenizer.word_index)
+
         elif self.tokenizer == None:
             self.logger.warning("No tokenizer to save.")
+
 
     def build_model(self):
         self.logger.info("Building model...")
@@ -268,25 +288,20 @@ class ChatbotTrainer:
         learning_rate = self.learning_rate
 
         # Encoder
-        self.encoder_inputs = Input(shape=(max_seq_length,))
-        encoder_embedding = Embedding(input_dim=self.all_vocab_size, output_dim=self.embedding_dim)(self.encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_state=True, dropout=0.2, recurrent_dropout=0.1)(encoder_embedding)
+        encoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.encoder_inputs)
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.15, recurrent_dropout=0.1)(encoder_embedding)
         encoder_states = [state_h, state_c]
 
         # Decoder
-        self.decoder_inputs = Input(shape=(max_seq_length,))
-        decoder_embedding = Embedding(input_dim=self.all_vocab_size, output_dim=self.embedding_dim)(self.decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.2, recurrent_dropout=0.1)
+        decoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.decoder_inputs)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.15, recurrent_dropout=0.1)
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
-        decoder_dense = Dense(units=self.all_vocab_size, activation='softmax')
+        decoder_dense = Dense(units=self.perceivedMax, activation='softmax')
         self.decoder_outputs = decoder_dense(decoder_outputs)
 
         # Create the model
         self.model = Model([self.encoder_inputs, self.decoder_inputs], decoder_outputs)
-
-        # Compilation
-        self.model.compile(optimizer=Adam(learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
         # Inference
         self.encoder_model = Model(self.encoder_inputs, encoder_states)
@@ -296,14 +311,20 @@ class ChatbotTrainer:
         self.decoder_states_inputs = [self.decoder_state_input_h, self.decoder_state_input_c]
 
         decoder_outputs, state_h, state_c = decoder_lstm(decoder_embedding, initial_state=self.decoder_states_inputs)
-        decoder_states = [state_h, state_c]
+        self.decoder_states = [state_h, state_c]
 
         self.decoder_outputs = decoder_dense(decoder_outputs)
 
-        self.decoder_model = Model([self.decoder_inputs] + self.decoder_states_inputs, [self.decoder_outputs] + decoder_states)
+        self.decoder_model = Model([self.decoder_inputs] + self.decoder_states_inputs, [self.decoder_outputs] + self.decoder_states)
+
+        # Compilation
+        self.model.compile(optimizer=Adam(learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 
     def train_model(self, input_texts, target_texts, conversation_id, speaker):
+        input_texts = [self.preprocess_text(phrase) for phrase in input_texts]
+        target_texts = [self.preprocess_text(phrase) for phrase in target_texts]
+
         # Save the speakerList
         with open('trained_speakers.txt', 'a') as file:
             file.write(f'{speaker}\n')
@@ -315,19 +336,31 @@ class ChatbotTrainer:
 
         # save_tokenizer and update num_words before training
         for lines in input_texts:
-            self.save_tokenizer(lines.split(" "))
-        
+            self.save_tokenizer([word for word in lines.split(' ')])
+
+        print(f"Num Words:  {self.tokenizer.num_words}")
+        print(f"All Index:  {len(self.tokenizer.word_index)}")
+        print(f"Length VocabList:  {len(self.vocabularyList)}")
+
         # Debug log line
         # self.logger.info(f"Word Counts:  {self.tokenizer.word_counts}")
+        # self.logger.info(f"Tokenizer Config:  {self.tokenizer.get_config()}")
 
         # Preprocess the training data using the tokenizer
         input_sequences = self.tokenizer.texts_to_sequences(input_texts)
+        # print(f"Input Seq:  {np.shape(input_sequences)}")
         padded_input_sequences = pad_sequences(input_sequences, maxlen=self.max_seq_length, padding='post')
+        # print(f"Padded Input Seq:  \n{padded_input_sequences}")
         target_sequences = self.tokenizer.texts_to_sequences(target_texts)
+        # print(f"Target Seq:  {np.shape(target_sequences)}")
         padded_target_sequences = pad_sequences(target_sequences, maxlen=self.max_seq_length, padding='post')
+        # print(f"Padded Target Seq:  \n{padded_target_sequences}")
 
         # Split this speaker's data into training and test sets
-        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=0.2, random_state=42)
+        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=0.2, random_state=86)
+
+        # Print Model Summary
+        # print(self.model.summary())
 
         # Train the model
         history = self.model.fit([train_input, train_target], train_target, epochs=self.epochs, batch_size=self.batch_size, validation_split=0.2)
@@ -351,24 +384,30 @@ class ChatbotTrainer:
         self.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
         self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
 
-        time.sleep(3)
+        playsound("AlienNotification.mp3")
+        time.sleep(10)
 
 
     def save_model(self):
         self.logger.info("Saving Model...")
         if self.model:
             self.model.save(self.model_filename)
+            self.encoder_model.save(self.encoder_filename)
+            self.decoder_model.save("decoder.keras")
+            self.logger.info("Saved Model with Encoder and Decoder")
         else:
             self.logger.warning("No model to save.")
 
-    def load_model_file(self):
+    def load_model_file(self, model_filename):
         self.logger.info("Loading Model and Tokenizer...")
-        if os.path.exists(self.model_filename):
+        if os.path.exists(model_filename) and os.path.exists(self.encoder_filename) and os.path.exists(self.decoder_filename):
             # Load both the model and tokenizer using TensorFlow's load_model method
-            self.model = tf.keras.models.load_model(self.model_filename)
-            self.logger.info("Model and tokenizer loaded successfully.")
+            self.model = load_model(model_filename)
+            self.encoder_model = load_model(self.encoder_filename)
+            self.decoder_model = load_model(self.decoder_filename)
+            self.logger.info("Model and Encoder/Decoder loaded successfully.")
 
-        elif not os.path.exists(self.model_filename):
+        elif not os.path.exists(model_filename):
             self.logger.warning("No saved model found... Making now...  ")
             # Build the model (if not already built)
             if self.model is None:
@@ -377,7 +416,7 @@ class ChatbotTrainer:
 
     def generate_response_with_beam_search(self, user_input, beam_width=3, batch_size=None):
         # Preprocess user input
-        user_input = self.preprocess_text([user_input])[0]
+        user_input = self.preprocess_text([user_input]).split(" ")
         user_input_seq = self.tokenizer.texts_to_sequences([user_input])
         user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
 
@@ -412,3 +451,56 @@ class ChatbotTrainer:
         # for response in response_texts:
             # if response not in token_index:
             # response_string = response_string + " " + response
+
+    def generate_response(self, user_input):
+        start_token_id = 1
+        end_token_id = 2
+
+        user_input = self.preprocess_text(user_input)
+
+        # Texts to seq for evaluation
+        user_input_seq = self.tokenizer.texts_to_sequences([user_input])[0]
+
+        user_input_seq = np.array([user_input_seq])
+        
+        padded_input_sequences = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post', truncating='post')
+        print(padded_input_sequences)
+
+        # Encode the input sequence using the chatbot model (encoder and decoder together)
+        chatbot_output, _ = self.model.predict(padded_input_sequences)
+
+        # Initialize the decoder input with a start token
+        decoder_input = np.array([[start_token_id]])
+
+        # List to store the generated output tokens
+        output_tokens = []
+
+        # Perform decoding step by step
+        for _ in range(max_sequence_length):  # Adjust max_sequence_length as needed
+            # Use the chatbot model to predict the next token
+            chatbot_output, _ = self.model.predict([decoder_input, padded_input_sequences])
+
+            # Extract the decoder output (assuming it's the first part of the chatbot output)
+            decoder_output = chatbot_output[:, :max_sequence_length, :]
+
+            # Print the structure of the decoder_output
+            print("Decoder Output Shape:", decoder_output.shape)
+
+            # Get the index of the predicted token
+            predicted_token_index = np.argmax(decoder_output)
+
+            # Append the predicted token to the output
+            output_tokens.append(predicted_token_index)
+
+            # Set the current predicted token as the input for the next decoding step
+            decoder_input = np.array([[predicted_token_index]])
+
+            # Check if the end token is predicted
+            if predicted_token_index == end_token_id:
+                break
+
+        # Convert the output tokens to words using your tokenizer or index-to-word mapping
+        predicted_output_words = [self.tokenizer.index_word.get(token, '<OOV>') for token in output_tokens]
+        response_string = " ".join(response_texts)
+
+        return response_string
