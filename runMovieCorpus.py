@@ -17,7 +17,9 @@ from chatbotTrainer import ChatbotTrainer  # Import your ChatbotTrainer class
 import pdb
 
 
-def run(chatbot_trainer, all_input_texts=[], all_target_texts=[]):
+def run(chatbot_trainer):
+    all_input_texts = []
+    all_target_texts = []
     for speaker, dialog_pairs in dialog_data.items():
         if speaker not in chatbot_trainer.speakerList:
             conversation_id = f"'{speaker}'"
@@ -30,14 +32,11 @@ def run(chatbot_trainer, all_input_texts=[], all_target_texts=[]):
             for input_text, target_text in dialog_pairs:
                 if input_text != "" and target_text != "":
                     # pdb.set_trace()
-                    # Tokenize the input and target text into words
-                    cleaned_input = chatbot_trainer.preprocess_text(input_text)
-                    cleaned_target = chatbot_trainer.preprocess_text(target_text)
 
-                    speaker_input_texts.append(cleaned_input)
-                    all_input_texts.append(cleaned_input)
-                    speaker_target_texts.append(cleaned_target)
-                    all_target_texts.append(cleaned_target)
+                    speaker_input_texts.append(input_text)
+                    all_input_texts.append(input_text)
+                    speaker_target_texts.append(target_text)
+                    all_target_texts.append(target_text)
 
             if len(speaker_input_texts) > 3:
                 # Train the model using the preprocessed training data for this speaker
