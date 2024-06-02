@@ -138,7 +138,7 @@ class ChatbotTrainer:
         self.epochs = 2
         self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
         self.max_vocab_size = len(self.vocabularyList)
-        self.lstm_units = 1024
+        self.lstm_units = 512
         self.perceivedMax = 1024
         self.speakerList = []
         self.encoder_model = None
