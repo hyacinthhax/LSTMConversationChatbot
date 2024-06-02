@@ -39,8 +39,13 @@ def run(chatbot_trainer):
                     all_target_texts.append(target_text)
 
             if len(speaker_input_texts) > 3:
-                # Train the model using the preprocessed training data for this speaker
-                chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
+                conversation = []
+                for i, input_text in enumerate(speaker_input_texts):
+                    conversation.append(input_text)
+                    target_text = speaker_target_texts[i]  # Get the corresponding target text
+                    if len(conversation) > 3:
+                        chatbot_trainer.train_model(conversation, [target_text], conversation_id, speaker)
+                # input("Enter to continue...  ")   # This is for supervised training and testing
 
             else:
                 print(f"\nSkipped {speaker} for not providing enough data...  \n")

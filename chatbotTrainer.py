@@ -9,7 +9,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Flatten
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 import matplotlib.pyplot as plt
 import logging
 import pickle
@@ -133,55 +133,54 @@ class ChatbotTrainer:
         self.logger = self.setup_logger()  # Initialize your logger here
         self.embedding_dim = 512  # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH
         self.max_seq_length = 512  # Replace with your desired sequence length
-        self.learning_rate = 0.001
+        self.learning_rate = 0.00222
         self.batch_size = 256
         self.epochs = 2
-        self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
-        self.max_vocab_size = len(self.vocabularyList)
+        self.vocabularyList = None
+        self.max_vocab_size = None
         self.lstm_units = 512
-        self.perceivedMax = 1024
+        self.perceivedMax = 7168
         self.speakerList = []
         self.encoder_model = None
         self.encoder_inputs = Input(shape=(self.max_seq_length,))
         self.decoder_inputs = Input(shape=(self.max_seq_length,))
         self.decoder_outputs = None
         self.decoder_model = None
-        self.encoder_filename = "encoder.keras"
+        self. encoder_filename = "encoder.keras"
         self.decoder_filename = "decoder.keras"
 
         # Import Speakers
         with open('trained_speakers.txt', 'r') as file:
             self.speakerList = file.read().splitlines()
 
-        try:
+        if os.path.exists(self.tokenizer_save_path):
+            with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
+                self.tokenizer = pickle.load(tokenizer_load_file)
+                self.all_vocab_size = self.tokenizer.num_words
+                for words in self.tokenizer.word_index:
+                    self.vocabularyList.append(words)
+                self.logger.info("Tokenizer loaded successfully.")
+                print(f"Number of words in loaded tokenizer: {len(self.tokenizer.word_index)}")
+                print(f"Number of words in the Vocab List: {len(self.vocabularyList)}")
+        else:
+            self.logger.warning("Tokenizer not found, making now...  ")
+            self.tokenizer = Tokenizer(num_words=None)  # Initialize the Tokenizer
 
-            if os.path.exists(self.tokenizer_save_path):
-                with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
-                    self.tokenizer = pickle.load(tokenizer_load_file)
-                    self.all_vocab_size = self.tokenizer.num_words
-                    self.logger.info("Tokenizer loaded successfully.")
-                    print("Number of words in loaded tokenizer:", len(self.tokenizer.word_index))
-            else:
-                self.logger.warning("Tokenizer not found, making now...  ")
-                self.tokenizer = Tokenizer(num_words=None)  # Initialize the Tokenizer
+            # Save '<OOV>', '<start>', and '<end>' to word index
+            self.tokenizer.num_words = 0
+            self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
+            for token in self.vocabularyList:
+                if token not in self.tokenizer.word_index:
+                    self.tokenizer.word_index[token] = self.tokenizer.num_words
+                    self.all_vocab_size += 1
+                    self.tokenizer.num_words += 1
 
-                # Save '<OOV>', '<start>', and '<end>' to word index
-                self.tokenizer.num_words = 0
-                for token in self.vocabularyList:
-                    if token not in self.tokenizer.word_index:
-                        self.tokenizer.word_index[token] = self.tokenizer.num_words
-                        self.all_vocab_size += 1
-                        self.tokenizer.num_words += 1
+            # Set Tokenizer Values:
+            self.tokenizer.num_words = len(self.tokenizer.word_index)
+            self.tokenizer.oov_token = "<OOV>"
 
-                # Set Tokenizer Values:
-                self.tokenizer.num_words = len(self.tokenizer.word_index)
-                self.tokenizer.oov_token = "<OOV>"
-
-                self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
-                self.save_tokenizer(self.vocabularyList)
-
-        except Exception as e:
-            print(e)
+            self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
+            self.save_tokenizer(self.vocabularyList)
 
         self.load_model_file(self.model_filename)
 
@@ -271,6 +270,7 @@ class ChatbotTrainer:
                             self.tokenizer.word_index[token] = self.tokenizer.num_words
                             print(f"Word: {token}\nIndex: {self.tokenizer.num_words}")
                             self.vocabularyList.append(token)
+                            self.max_vocab_size = len(self.vocabularyList)
 
                 self.tokenizer.fit_on_texts(texts)
 
@@ -294,12 +294,12 @@ class ChatbotTrainer:
 
         # Encoder
         encoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.15, recurrent_dropout=0.1)(encoder_embedding)
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.2, recurrent_dropout=0.1)(encoder_embedding)
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=0.15, recurrent_dropout=0.1)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=0.2, recurrent_dropout=0.1)
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
         # Create the model
@@ -361,13 +361,13 @@ class ChatbotTrainer:
         # print(f"Padded Target Seq:  \n{padded_target_sequences}")
 
         # Split this speaker's data into training and test sets
-        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=0.2, random_state=86)
+        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=0.05, random_state=86)
 
         # Print Model Summary
         # print(self.model.summary())
 
         # Train the model
-        history = self.model.fit([train_input, train_target], train_target, epochs=self.epochs, batch_size=self.batch_size, validation_split=0.2)
+        history = self.model.fit([train_input, train_target], train_target, epochs=self.epochs, batch_size=self.batch_size, validation_split=0.1)
 
         # Evaluate the model on the test data
         test_loss, test_accuracy = self.model.evaluate([test_input, test_target], test_target, batch_size=self.batch_size)
@@ -379,7 +379,8 @@ class ChatbotTrainer:
         self.save_model()
 
         # Log training metrics
-        self.logger.info("Training metrics:")
+        self.logger.info(f"Training metrics:")
+        self.logger.info(f'Epoch {epoch+1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}')
         self.logger.info("Model trained successfully.")
 
         # Save training metrics plot as an image and get the filename
@@ -388,7 +389,7 @@ class ChatbotTrainer:
         self.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
         self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
 
-        playsound("AlienNotification.mp3")
+        # playsound("AlienNotification.mp3")
         time.sleep(10)
 
 
