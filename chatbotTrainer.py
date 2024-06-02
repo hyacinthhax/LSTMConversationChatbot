@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout
+from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Flatten
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
@@ -131,52 +131,57 @@ class ChatbotTrainer:
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.logger = self.setup_logger()  # Initialize your logger here
-        self.embedding_dim = 100  # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH
-        self.max_seq_length = 100  # Replace with your desired sequence length
+        self.embedding_dim = 512  # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH
+        self.max_seq_length = 512  # Replace with your desired sequence length
         self.learning_rate = 0.001
         self.batch_size = 256
-        self.epochs = 10
+        self.epochs = 2
         self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
         self.max_vocab_size = len(self.vocabularyList)
-        self.lstm_units = 2457
-        self.perceivedMax = 10000
+        self.lstm_units = 1024
+        self.perceivedMax = 1024
         self.speakerList = []
         self.encoder_model = None
         self.encoder_inputs = Input(shape=(self.max_seq_length,))
         self.decoder_inputs = Input(shape=(self.max_seq_length,))
         self.decoder_outputs = None
         self.decoder_model = None
-        self. encoder_filename = "encoder.keras"
+        self.encoder_filename = "encoder.keras"
         self.decoder_filename = "decoder.keras"
 
         # Import Speakers
         with open('trained_speakers.txt', 'r') as file:
             self.speakerList = file.read().splitlines()
 
-        if os.path.exists(self.tokenizer_save_path):
-            with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
-                self.tokenizer = pickle.load(tokenizer_load_file)
-                self.all_vocab_size = self.tokenizer.num_words
-                self.logger.info("Tokenizer loaded successfully.")
-                print("Number of words in loaded tokenizer:", len(self.tokenizer.word_index))
-        else:
-            self.logger.warning("Tokenizer not found, making now...  ")
-            self.tokenizer = Tokenizer(num_words=None)  # Initialize the Tokenizer
+        try:
 
-            # Save '<OOV>', '<start>', and '<end>' to word index
-            self.tokenizer.num_words = 0
-            for token in self.vocabularyList:
-                if token not in self.tokenizer.word_index:
-                    self.tokenizer.word_index[token] = self.tokenizer.num_words
-                    self.all_vocab_size += 1
-                    self.tokenizer.num_words += 1
+            if os.path.exists(self.tokenizer_save_path):
+                with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
+                    self.tokenizer = pickle.load(tokenizer_load_file)
+                    self.all_vocab_size = self.tokenizer.num_words
+                    self.logger.info("Tokenizer loaded successfully.")
+                    print("Number of words in loaded tokenizer:", len(self.tokenizer.word_index))
+            else:
+                self.logger.warning("Tokenizer not found, making now...  ")
+                self.tokenizer = Tokenizer(num_words=None)  # Initialize the Tokenizer
 
-            # Set Tokenizer Values:
-            self.tokenizer.num_words = len(self.tokenizer.word_index)
-            self.tokenizer.oov_token = "<OOV>"
+                # Save '<OOV>', '<start>', and '<end>' to word index
+                self.tokenizer.num_words = 0
+                for token in self.vocabularyList:
+                    if token not in self.tokenizer.word_index:
+                        self.tokenizer.word_index[token] = self.tokenizer.num_words
+                        self.all_vocab_size += 1
+                        self.tokenizer.num_words += 1
 
-            self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
-            self.save_tokenizer(self.vocabularyList)
+                # Set Tokenizer Values:
+                self.tokenizer.num_words = len(self.tokenizer.word_index)
+                self.tokenizer.oov_token = "<OOV>"
+
+                self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
+                self.save_tokenizer(self.vocabularyList)
+
+        except Exception as e:
+            print(e)
 
         self.load_model_file(self.model_filename)
 
@@ -294,11 +299,8 @@ class ChatbotTrainer:
 
         # Decoder
         decoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.15, recurrent_dropout=0.1)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=0.15, recurrent_dropout=0.1)
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
-
-        decoder_dense = Dense(units=self.perceivedMax, activation='softmax')
-        self.decoder_outputs = decoder_dense(decoder_outputs)
 
         # Create the model
         self.model = Model([self.encoder_inputs, self.decoder_inputs], decoder_outputs)
@@ -311,14 +313,16 @@ class ChatbotTrainer:
         self.decoder_states_inputs = [self.decoder_state_input_h, self.decoder_state_input_c]
 
         decoder_outputs, state_h, state_c = decoder_lstm(decoder_embedding, initial_state=self.decoder_states_inputs)
+        decoder_outputs = Flatten()(decoder_outputs)
         self.decoder_states = [state_h, state_c]
 
+        decoder_dense = Dense(units=self.perceivedMax, activation='softmax')
         self.decoder_outputs = decoder_dense(decoder_outputs)
 
         self.decoder_model = Model([self.decoder_inputs] + self.decoder_states_inputs, [self.decoder_outputs] + self.decoder_states)
 
         # Compilation
-        self.model.compile(optimizer=Adam(learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        self.model.compile(optimizer=Adam(learning_rate), loss='categorical_crossentropy', metrics=['accuracy'])
 
 
     def train_model(self, input_texts, target_texts, conversation_id, speaker):

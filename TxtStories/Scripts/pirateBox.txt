@@ -1,0 +1,64 @@
+ 3. Once you have finished copying the Raspberry Pi(rate)Box image to your SD card, insert it into the Raspberry Pi and connect it via ethernet cable to your home router. Be sure your USB Wi-Fi adapter and FAT32 formatted USB drive are both plugged in (see “Stuff You'll Need” section above for more info on compatible devices).
+
+4. Wait 2-3 minutes for your Pi to fully boot and then open a terminal window (for OS X, go to Applications > Utilities > Terminal; for Windows, install and open PuTTY) and ssh into your PirateBox:
+
+ssh alarm@alarmpi
+
+The password is: alarm
+
+Note: If you are using PuTTY, enter in the hostname field “alarm@alarmpi” or “alarm@192.168.77.1”
+
+5. Once you have logged in, change your password (to something you'll remember!) by using the passwd command:
+
+passwd 
+
+You will be prompted to enter and then confirm your new password.
+
+Root user is not allowed to login via remote, you do not need to set a password for root. Use sudo to invoke commands as root.
+
+The default password for user root is root. It is strongly recommended to change this password as well. You can do this while being logged in as alarm running this command:
+
+sudo passwd root
+
+Note: At this point, the PirateBox AP should be available, if you have a supported WiFi stick attached. For problems see here this mod guide or post to the RPi forum mentioning the failed WiFi auto detection.
+
+6. Optional: By default, the PirateBox stores the uploaded files into the root filesystem. This is sufficient for first tests, but for larger installations you should consider using a different partition or medium. The extracted image uses around 2GB of the SD Card, so you can use the remaining SD card storage, or your USB flash drive. This process is documented on the Raspberry Pi(rate)Box Mods page.
+
+7. Your PirateBox ist started automatically as soon as a supported WiFi stick is detected.
+
+8. You are now ready to activate the Kareha Image and Discussion Board, enable your USB drive as share and start the UPnP server. See the post-installation instructions below for details.
+Post-Installation
+
+Once you have installed or upgraded your PirateBox, follow these final steps to activate the Kareha Image and Discussion Board and configure and start the UPnP media server.
+
+1. Power up your PirateBox (make sure it is not connected via ethernet cable) and join the SSID “PirateBox: Share freely” network. Open a terminal window (for OS X, go to Applications > Utilities > Terminal; for Windows, install and open PuTTY) and ssh into your PirateBox:
+
+ssh alarm@192.168.77.1
+
+2. Recommended: Activate the USB Stick (FAT32 only) sudo /opt/piratebox/rpi/bin/usb_share.sh or (since 1.1.3) the spare space on the SDCard as storage using the command sudo /opt/piratebox/rpi/bin/sdcard_share.sh.
+
+3. Activate the Kareha Image and Discussion Board by using the board-autoconf tool:
+
+sudo /opt/piratebox/bin/board-autoconf.sh
+
+4. Activate the “timesave functionality” once:
+
+ sudo /opt/piratebox/bin/timesave.sh /opt/piratebox/conf/piratebox.conf install
+ sudo systemctl enable timesave 
+
+5. Activate the UPnP Media Server by copying over the config file:
+
+sudo cp /etc/minidlna.conf /etc/minidlna.conf.bkp
+sudo cp /opt/piratebox/src/linux.example.minidlna.conf /etc/minidlna.conf
+
+Note: Optionally, you can edit the config file (change the display name, etc) with:
+
+sudo nano /etc/minidlna.conf
+
+6. Finally, start the UPnP Media Server with:
+
+sudo systemctl start minidlna
+sudo systemctl enable minidlna
+
+
+http://piratebox.lan/content/
