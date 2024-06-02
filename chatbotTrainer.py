@@ -140,6 +140,10 @@ class ChatbotTrainer:
         self.max_vocab_size = None
         self.lstm_units = 512
         self.perceivedMax = 7168
+        self.dropout = 0.05
+        self.recurrent_dropout = 0.05
+        self.test_size = 0.05
+        self.validation_split = 0.1
         self.speakerList = []
         self.encoder_model = None
         self.encoder_inputs = Input(shape=(self.max_seq_length,))
@@ -294,12 +298,12 @@ class ChatbotTrainer:
 
         # Encoder
         encoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.encoder_inputs)
-        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=0.2, recurrent_dropout=0.1)(encoder_embedding)
+        encoder_lstm, state_h, state_c = LSTM(units=lstm_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)(encoder_embedding)
         encoder_states = [state_h, state_c]
 
         # Decoder
         decoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=0.2, recurrent_dropout=0.1)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)(decoder_embedding)
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
         # Create the model
@@ -361,13 +365,13 @@ class ChatbotTrainer:
         # print(f"Padded Target Seq:  \n{padded_target_sequences}")
 
         # Split this speaker's data into training and test sets
-        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=0.05, random_state=86)
+        train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=self.test_size, random_state=86)
 
         # Print Model Summary
         # print(self.model.summary())
 
         # Train the model
-        history = self.model.fit([train_input, train_target], train_target, epochs=self.epochs, batch_size=self.batch_size, validation_split=0.1)
+        history = self.model.fit([train_input, train_target], train_target, epochs=self.epochs, batch_size=self.batch_size, validation_split=self.validation_split)
 
         # Evaluate the model on the test data
         test_loss, test_accuracy = self.model.evaluate([test_input, test_target], test_target, batch_size=self.batch_size)
