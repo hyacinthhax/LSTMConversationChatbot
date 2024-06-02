@@ -372,6 +372,14 @@ class ChatbotTrainer:
         # Evaluate the model on the test data
         test_loss, test_accuracy = self.model.evaluate([test_input, test_target], test_target, batch_size=self.batch_size)
 
+        # Cross Val Score
+        X = input_texts
+        y = target_texts
+
+        scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
+
+        self.logger.info(f"Average accuracy: {scores.mean() * 100:.2f}%")
+
         # Save Best progress to new h5 to avoid losing data
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint("best_model.h5", save_best_only=True)
 
