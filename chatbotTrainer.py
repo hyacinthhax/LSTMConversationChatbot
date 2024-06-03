@@ -9,7 +9,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Flatten
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import logging
 import pickle
@@ -136,14 +136,14 @@ class ChatbotTrainer:
         self.learning_rate = 0.00222
         self.batch_size = 256
         self.epochs = 2
-        self.vocabularyList = None
+        self.vocabularyList = []
         self.max_vocab_size = None
         self.lstm_units = 512
         self.perceivedMax = 7168
-        self.dropout = 0.05
-        self.recurrent_dropout = 0.05
-        self.test_size = 0.05
-        self.validation_split = 0.1
+        self.dropout = 0.07
+        self.recurrent_dropout = 0.07
+        self.validation_split = 0.7
+        self.test_size = 0.1
         self.speakerList = []
         self.encoder_model = None
         self.encoder_inputs = Input(shape=(self.max_seq_length,))
@@ -161,8 +161,9 @@ class ChatbotTrainer:
             with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
                 self.tokenizer = pickle.load(tokenizer_load_file)
                 self.all_vocab_size = self.tokenizer.num_words
-                for words in self.tokenizer.word_index:
-                    self.vocabularyList.append(words)
+                for words, i in self.tokenizer.word_index.items():
+                    if words not in self.vocabularyList:
+                        self.vocabularyList.append(words)
                 self.logger.info("Tokenizer loaded successfully.")
                 print(f"Number of words in loaded tokenizer: {len(self.tokenizer.word_index)}")
                 print(f"Number of words in the Vocab List: {len(self.vocabularyList)}")
@@ -248,19 +249,23 @@ class ChatbotTrainer:
 
     def preprocess_text(self, text):
         # Inputs a String of Text Converts as that string whole
-        blacklist = ['"', '<', '>', "'"]
-        cleaned_text = []
-        for words in text:
-            if words not in blacklist:
+        blacklist = ['"', '<', '>', "'", "-", "=", "$", "^", "*", "&", "@", "#", "\n", "", '', " "]
+        cleaned_text = ["<start>"]
+        for words in text.split():
+            for letters in blacklist:
+                words = words.lower().strip(letters)
+            if words not in self.vocabularyList and words != '':
+                self.vocabularyList.append(words)
+            if words != '':
                 cleaned_text.append(words)
+        cleaned_text.append("<end>")
 
-        cleaned_text = ''.join(cleaned_text)
-        # Remove multiple spaces
-        cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
-        cleaned_text = re.sub(r"[^A-Za-z0-9 ]+", "", cleaned_text)
         # Add '<start>' to beginning and '<end>'
-        cleaned_text = f"<start> {cleaned_text} <end>"
-        return cleaned_text.lower()
+        cleaned_text = [word.strip(" ") for word in cleaned_text]
+        data_string = (" ".join(cleaned_text).strip(" "))
+        # Debug Line
+        # print(data_string)
+        return cleaned_text, data_string
 
 
     def save_tokenizer(self, texts=None):
@@ -268,13 +273,12 @@ class ChatbotTrainer:
             if texts:
                 for token in texts:
                     if token not in self.tokenizer.word_index:
-                        if token not in self.vocabularyList:
-                            self.all_vocab_size += 1
-                            self.tokenizer.num_words += 1
-                            self.tokenizer.word_index[token] = self.tokenizer.num_words
-                            print(f"Word: {token}\nIndex: {self.tokenizer.num_words}")
-                            self.vocabularyList.append(token)
-                            self.max_vocab_size = len(self.vocabularyList)
+                        self.all_vocab_size += 1
+                        self.tokenizer.num_words += 1
+                        self.tokenizer.word_index[token] = self.tokenizer.num_words
+                        # Debug Line
+                        # print(f"Word: {token}\nIndex: {self.tokenizer.num_words}")
+                        self.max_vocab_size = len(self.vocabularyList)
 
                 self.tokenizer.fit_on_texts(texts)
 
@@ -303,7 +307,7 @@ class ChatbotTrainer:
 
         # Decoder
         decoder_embedding = Embedding(input_dim=self.perceivedMax, output_dim=self.embedding_dim, input_length=max_seq_length)(self.decoder_inputs)
-        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)(decoder_embedding)
+        decoder_lstm = LSTM(units=lstm_units, return_sequences=False, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
         decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
 
         # Create the model
@@ -330,8 +334,14 @@ class ChatbotTrainer:
 
 
     def train_model(self, input_texts, target_texts, conversation_id, speaker):
-        input_texts = [self.preprocess_text(phrase) for phrase in input_texts]
-        target_texts = [self.preprocess_text(phrase) for phrase in target_texts]
+        # Lines for later debugging in vectors
+        input_textss = [self.preprocess_text(input_text)[0] for input_text in input_texts]
+        target_textss = [self.preprocess_text(target_text)[0] for target_text in target_texts]
+
+        input_strings = [(self.preprocess_text(input_text)[1]) for input_text in input_texts]
+        target_strings = [(self.preprocess_text(target_text)[1]) for target_text in target_texts]
+
+        self.save_tokenizer(self.vocabularyList)
 
         # Save the speakerList
         with open('trained_speakers.txt', 'a') as file:
@@ -342,10 +352,6 @@ class ChatbotTrainer:
         if self.corpus is None or self.tokenizer is None:
             raise ValueError("Corpus or tokenizer is not initialized.")
 
-        # save_tokenizer and update num_words before training
-        for lines in input_texts:
-            self.save_tokenizer([word for word in lines.split(' ')])
-
         print(f"Num Words:  {self.tokenizer.num_words}")
         print(f"All Index:  {len(self.tokenizer.word_index)}")
         print(f"Length VocabList:  {len(self.vocabularyList)}")
@@ -355,34 +361,26 @@ class ChatbotTrainer:
         # self.logger.info(f"Tokenizer Config:  {self.tokenizer.get_config()}")
 
         # Preprocess the training data using the tokenizer
-        input_sequences = self.tokenizer.texts_to_sequences(input_texts)
-        # print(f"Input Seq:  {np.shape(input_sequences)}")
+        input_sequences = self.tokenizer.texts_to_sequences(input_strings)
+        print(f"Input Seq:  {np.shape(input_sequences)}")
         padded_input_sequences = pad_sequences(input_sequences, maxlen=self.max_seq_length, padding='post')
-        # print(f"Padded Input Seq:  \n{padded_input_sequences}")
-        target_sequences = self.tokenizer.texts_to_sequences(target_texts)
-        # print(f"Target Seq:  {np.shape(target_sequences)}")
+        print(f"Padded Input Seq:  \n{padded_input_sequences}")
+        target_sequences = self.tokenizer.texts_to_sequences(target_strings)
+        print(f"Target Seq:  {np.shape(target_sequences)}")
         padded_target_sequences = pad_sequences(target_sequences, maxlen=self.max_seq_length, padding='post')
-        # print(f"Padded Target Seq:  \n{padded_target_sequences}")
+        print(f"Padded Target Seq:  \n{padded_target_sequences}")
 
         # Split this speaker's data into training and test sets
         train_input, test_input, train_target, test_target = train_test_split(padded_input_sequences, padded_target_sequences, test_size=self.test_size, random_state=86)
 
         # Print Model Summary
-        # print(self.model.summary())
+        print(self.model.summary())
 
         # Train the model
         history = self.model.fit([train_input, train_target], train_target, epochs=self.epochs, batch_size=self.batch_size, validation_split=self.validation_split)
 
         # Evaluate the model on the test data
         test_loss, test_accuracy = self.model.evaluate([test_input, test_target], test_target, batch_size=self.batch_size)
-
-        # Cross Val Score
-        X = input_texts
-        y = target_texts
-
-        scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
-
-        self.logger.info(f"Average accuracy: {scores.mean() * 100:.2f}%")
 
         # Save Best progress to new h5 to avoid losing data
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint("best_model.h5", save_best_only=True)
@@ -392,7 +390,6 @@ class ChatbotTrainer:
 
         # Log training metrics
         self.logger.info(f"Training metrics:")
-        self.logger.info(f'Epoch {epoch+1}, Loss: {loss:.4f}, Accuracy: {accuracy:.4f}')
         self.logger.info("Model trained successfully.")
 
         # Save training metrics plot as an image and get the filename
@@ -437,8 +434,8 @@ class ChatbotTrainer:
         user_input_seq = self.tokenizer.texts_to_sequences([user_input])
         user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
 
-        self.tokenizer.start_token = self.vocabularyList[0]
-        self.tokenizer.end_token = self.vocabularyList[1]
+        self.tokenizer.start_token = self.tokenizer.index_word['<start>']
+        self.tokenizer.end_token = self.tokenizer.index_word['<end>']
 
         reverse_target_char_index = dict(map(reversed, self.tokenizer.word_index.items()))
 
@@ -473,13 +470,16 @@ class ChatbotTrainer:
         start_token_id = 1
         end_token_id = 2
 
-        user_input = self.preprocess_text(user_input)
+        user_inputs = self.preprocess_text(user_input)
+        user_input = []
+        for words in user_inputs.split():
+            user_input.append(words)
 
         # Texts to seq for evaluation
-        user_input_seq = self.tokenizer.texts_to_sequences([user_input])[0]
+        user_input_seq = self.tokenizer.texts_to_sequences(user_input)[0]
 
-        user_input_seq = np.array([user_input_seq])
-        
+        # user_input_seq = np.array([user_input_seq])
+
         padded_input_sequences = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post', truncating='post')
         print(padded_input_sequences)
 

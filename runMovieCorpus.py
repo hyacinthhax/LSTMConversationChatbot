@@ -24,7 +24,6 @@ def run(chatbot_trainer):
         if speaker not in chatbot_trainer.speakerList:
             conversation_id = f"'{speaker}'"
             print(f"Speaker: {conversation_id}")
-
             # Initialize lists for this speaker's data
             speaker_input_texts = []
             speaker_target_texts = []
@@ -32,20 +31,14 @@ def run(chatbot_trainer):
             for input_text, target_text in dialog_pairs:
                 if input_text != "" and target_text != "":
                     # pdb.set_trace()
-
                     speaker_input_texts.append(input_text)
                     all_input_texts.append(input_text)
                     speaker_target_texts.append(target_text)
                     all_target_texts.append(target_text)
 
             if len(speaker_input_texts) > 3:
-                conversation = []
-                for i, input_text in enumerate(speaker_input_texts):
-                    conversation.append(input_text)
-                    target_text = speaker_target_texts[i]  # Get the corresponding target text
-                    if len(conversation) > 3:
-                        chatbot_trainer.train_model(conversation, [target_text], conversation_id, speaker)
-                # input("Enter to continue...  ")   # This is for supervised training and testing
+                # Train the model using the preprocessed training data for this speaker
+                chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
 
             else:
                 print(f"\nSkipped {speaker} for not providing enough data...  \n")
