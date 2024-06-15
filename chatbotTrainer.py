@@ -15,16 +15,18 @@ import logging
 import pickle
 import convokit
 from processed_dialogs import dialog_data  # Import the dialog_data dictionary
-from playsound import playsound
 import time
+import pdb
 
 
 class BeamSearchHelper:
-    def __init__(self, model, tokenizer, max_seq_length, top_k=5):
+    def __init__(self, model, tokenizer, max_seq_length, encoder_filename, decoder_filename, top_k=5):
         self.model = model
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
         self.top_k = top_k
+        self.encoder_filename = encoder_filename
+        self.decoder_filename = decoder_filename
         self.logger = self.setup_logger()
 
     def setup_logger(self):
@@ -42,84 +44,56 @@ class BeamSearchHelper:
         file_handler = logging.FileHandler("chatbotBeam.log")
         file_handler.setLevel(logging.DEBUG)  # Set level to DEBUG to capture progress reports
         file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
 
         return logger
 
+    def beam_search(self, input_seq, beam_width=3):
+        # Load models
+        encoder_model = load_model(self.encoder_filename)
+        decoder_model = load_model(self.decoder_filename)
+        
+        # Encode the input sequence
+        states_value = encoder_model.predict(input_seq)
 
-    def beam_search(self, input_seqs, beam_width=3):
-        # Find the correct index of the LSTM layer
-        lstm_layer_index = None
-        for i, layer in enumerate(self.model.layers):
-            if isinstance(layer, LSTM):
-                self.logger.info(f"LSTM layer found at index {i}: {layer}")
-                lstm_layer_index = i
-
-        if lstm_layer_index is not None:
-            lstm_layer = self.model.layers[lstm_layer_index]
-
-        # Initialize beam search with a single hypothesis for each input sequence
-        initial_states = [lstm_layer.get_initial_state(inputs=tf.constant([seq])) for seq in input_seqs]
-        initial_beams = [BeamState(state=state, score=0.0, sequence=[input_seqs], logger=self.logger) for state in initial_states]
-
-        beam_states = initial_beams
-
-        # Perform beam search
+        sequences = [[list(), 1.0, states_value]]
+        
+        # Walk over each step in sequence
         for _ in range(self.max_seq_length):
-            new_beam_states = []
-            for state in beam_states:
-                if state.sequence[-1][-1] == self.tokenizer.end_token:
-                    # If the hypothesis ends, add it to the final hypotheses
-                    new_beam_states.append(state)
-                else:
-                    # Generate next token probabilities and states for all input sequences
-                    decoder_input_token = tf.constant([[self.tokenizer.word_index[state.sequence[-1]]]] * len(input_seqs))
-                    decoder_input_token = pad_sequences(decoder_input_token, maxlen=self.max_seq_length, padding='post', truncating='post')
-                    
-                    decoder_input = tf.constant(decoder_input_token, dtype=tf.float32)
+            all_candidates = list()
+            for i in range(len(sequences)):
+                seq, score, states = sequences[i]
+                if len(seq) > 0 and seq[-1] == self.tokenizer.word_index.get('<end>'):
+                    all_candidates.append(sequences[i])
+                    continue
 
-                    decoder_state = state.state
+                target_seq = np.zeros((1, 1))
+                target_seq[0, 0] = self.tokenizer.word_index.get('<start>') if len(seq) == 0 else seq[-1]
 
-                    decoder_output, decoder_state, _ = lstm_layer(decoder_input, initial_state=decoder_state)
-                    
-                    token_probs = decoder_output[:, 0, :]  # Slice for all sequences
+                output_tokens, h, c = decoder_model.predict([target_seq] + states)
+                states = [h, c]
 
-                    # Get the top-k tokens for each input sequence
-                    top_k_tokens = np.argsort(token_probs, axis=-1)[:, -self.top_k:]
-
-                    for seq_idx in range(len(input_seqs)):
-                        for token in top_k_tokens[seq_idx]:
-                            new_seq = state.sequence + [token]
-                            new_score = state.score - np.log(token_probs[seq_idx, token])
-                            new_state = decoder_state
-
-                            new_beam_states.append(BeamState(score=new_score, sequence=new_seq, state=new_state))
-
-            # Select top beam_width hypotheses for each input sequence
-            new_beam_states = np.array(new_beam_states)
-            best_indices = np.argsort(new_beam_states[:, 0])[:beam_width]
-
-            beam_states = new_beam_states[best_indices]
-
-        # Get the hypotheses with the highest scores for each input sequence
-        best_hypotheses = [max(initial_beams, key=lambda x: x.score) for initial_beams in beam_states]
-        return [hypothesis.sequence[1:] for hypothesis in best_hypotheses]  # Exclude the start token
-
+                for j in range(len(output_tokens[0, -1, :])):
+                    candidate = [seq + [j], score * -np.log(output_tokens[0, -1, j]), states]
+                    all_candidates.append(candidate)
+            
+            ordered = sorted(all_candidates, key=lambda tup: tup[1])
+            sequences = ordered[:beam_width]
+        
+        return sequences[0][0]
 
 class BeamState:
-    def __init__(self, score, sequence, state, logger):
-        if not isinstance(score, (float, int)):
-            logger.warning(f"Warning: Invalid score type: {type(score)}")
-        if not isinstance(sequence, list):
-            logger.warning(f"Warning: Invalid sequence type: {type(sequence)}")
-        if not isinstance(state, np.ndarray):  # Adjust the type accordingly
-            logger.warning(f"Warning: Invalid state type: {type(state)}")
-
-        self.score = score
+    def __init__(self, sequence, score, state, logger):
         self.sequence = sequence
+        self.score = score
         self.state = state
+        self.logger = logger
 
+    def __lt__(self, other):
+        return self.score < other.score
+
+    def log(self, message):
+        self.logger.debug(message)
 
 
 class ChatbotTrainer:
@@ -127,35 +101,31 @@ class ChatbotTrainer:
         self.corpus = None
         self.all_vocab_size = 0
         self.model = None
-        self.model_filename = "chatbot_model.keras"
+        self.name = "Alan"
+        self.model_filename = "Alan_model.keras"
+        self. encoder_filename = "encoder.keras"
+        self.decoder_filename = "decoder.keras"
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.logger = self.setup_logger()  # Initialize your logger here
-        self.embedding_dim = 512  # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH
-        self.max_seq_length = 512  # Replace with your desired sequence length
+        self.embedding_dim =  128 # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH and Replace with your desired sequence length(Max words in response)
+        self.max_seq_length = 128
         self.learning_rate = 0.00222
-        self.batch_size = 256
-        self.epochs = 2
+        self.batch_size = 64
+        self.epochs = 3
         self.vocabularyList = []
         self.max_vocab_size = None
-        self.lstm_units = 512
-        self.perceivedMax = 7168
-        self.dropout = 0.07
-        self.recurrent_dropout = 0.07
-        self.validation_split = 0.7
+        self.max_vocabulary = 30000
+        self.lstm_units = 1024
+        self.dropout = 0.3
+        self.recurrent_dropout = 0.3
+        self.validation_split = 0.2
         self.test_size = 0.1
-        self.speakerList = []
         self.encoder_model = None
-        self.encoder_inputs = Input(shape=(self.max_seq_length,))
-        self.decoder_inputs = Input(shape=(self.max_seq_length,))
+        self.encoder_inputs = None
+        self.decoder_inputs = None
         self.decoder_outputs = None
         self.decoder_model = None
-        self. encoder_filename = "encoder.keras"
-        self.decoder_filename = "decoder.keras"
-
-        # Import Speakers
-        with open('trained_speakers.txt', 'r') as file:
-            self.speakerList = file.read().splitlines()
 
         if os.path.exists(self.tokenizer_save_path):
             with open(self.tokenizer_save_path, 'rb') as tokenizer_load_file:
@@ -212,7 +182,7 @@ class ChatbotTrainer:
         plt.legend()
 
         # Save the plot as an image file
-        plot_filename = os.path.join("C:\\Users\\admin\\Desktop\\ChatBotMetrics", f"{speaker}_training_metrics.png")
+        plot_filename = os.path.join("E:\\ChatBotMetrics", f"{speaker}_training_metrics.png")
         plt.tight_layout()
         plt.savefig(plot_filename)  # Save the plot as an image
         plt.close()  # Close the plot to free up memory
@@ -273,6 +243,7 @@ class ChatbotTrainer:
         text = re.sub(r"[^a-zA-Z0-9]+", ' ', text)
         return text
 
+    # Training
     def preprocess_texts(self, input_texts, target_texts):
         input_texts = [self.clean_text(text) for text in input_texts]
         target_texts = [self.clean_text(text) for text in target_texts]
@@ -290,82 +261,95 @@ class ChatbotTrainer:
 
         return input_sequences, target_sequences
 
+    # Prediction
+    def preprocess_text(self, texts):
+        # Assuming texts is a list of sentences
+        preprocessed_texts = []
+        for text in texts:
+            # Example preprocessing: lowercase and split
+            preprocessed_text = text.lower().split()
+            preprocessed_texts.append(preprocessed_text)
+        
+        return preprocessed_texts
+    
     def train_model(self, input_texts, target_texts, conversation_id, speaker):
+        self.logger.info(f"Training Model for ConversationID: {conversation_id}")
+
         if self.corpus is None or self.tokenizer is None:
             raise ValueError("Corpus or tokenizer is not initialized.")
 
-        self.logger.info(f"Training Model for ConversationID: {conversation_id}")
-
         input_sequences, target_sequences = self.preprocess_texts(input_texts, target_texts)
 
+        # Save the tokenizer from VocabList
         self.save_tokenizer(self.vocabularyList)
+        self.logger.info(f"Num Words:  {self.tokenizer.num_words}")
+        self.logger.info(f"All Index:  {len(self.tokenizer.word_index)}")
+        self.logger.info(f"Length VocabList:  {len(self.vocabularyList)}")
 
-        print(f"Num Words:  {self.tokenizer.num_words}")
-        print(f"All Index:  {len(self.tokenizer.word_index)}")
-        print(f"Length VocabList:  {len(self.vocabularyList)}")
+        # Debug Line
+        # pdb.set_trace()
 
-        encoder_inputs = Input(shape=(self.max_seq_length,))
-        encoder_embedding = Embedding(input_dim=self.max_vocab_size, output_dim=self.embedding_dim)(encoder_inputs)
-        encoder_lstm = LSTM(self.lstm_units, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
-        _, state_h, state_c = encoder_lstm(encoder_embedding)
-        encoder_states = [state_h, state_c]
+        if self.model is None:
+            self.encoder_inputs = Input(shape=(self.max_seq_length,))
+            encoder_embedding = Embedding(input_dim=self.max_vocabulary, output_dim=self.embedding_dim)(self.encoder_inputs)
+            encoder_lstm = LSTM(self.lstm_units, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
+            _, state_h, state_c = encoder_lstm(encoder_embedding)
+            encoder_states = [state_h, state_c]
+            self.encoder_model = Model(self.encoder_inputs, encoder_states)
+            self.encoder_model.save(self.encoder_filename)
 
-        decoder_inputs = Input(shape=(self.max_seq_length,))
-        decoder_embedding = Embedding(input_dim=self.max_vocab_size, output_dim=self.embedding_dim)(decoder_inputs)
-        decoder_lstm = LSTM(self.lstm_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
-        decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
-        decoder_dense = Dense(self.max_vocab_size, activation='softmax')
-        decoder_outputs = decoder_dense(decoder_outputs)
+            self.decoder_inputs = Input(shape=(None,), name='decoder_input')
+            decoder_embedding = Embedding(input_dim=self.max_vocabulary, output_dim=self.embedding_dim)(self.decoder_inputs)
+            decoder_lstm = LSTM(self.lstm_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
+            decoder_state_input_h = Input(shape=(self.lstm_units,))
+            decoder_state_input_c = Input(shape=(self.lstm_units,))
+            decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+            decoder_lstm_output, state_h, state_c = decoder_lstm(decoder_embedding, initial_state=decoder_states_inputs)
+            decoder_states = [state_h, state_c]
+            decoder_dense = Dense(self.max_vocabulary, activation='softmax')
+            self.decoder_outputs = decoder_dense(decoder_lstm_output)
+            self.decoder_model = Model([self.decoder_inputs] + decoder_states_inputs, [self.decoder_outputs] + decoder_states)
+            self.decoder_model.save(self.decoder_filename)
 
-        model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            decoder_lstm_output, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
+            self.decoder_outputs = decoder_dense(decoder_lstm_output)
+            self.model = Model([self.encoder_inputs, self.decoder_inputs], self.decoder_outputs)
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
         encoder_input_data, decoder_input_data = input_sequences, target_sequences[:, :-1]
         decoder_target_data = target_sequences[:, 1:]
-
-        # Pad the sequences to the maximum length
-        encoder_input_data = pad_sequences(encoder_input_data, maxlen=self.max_seq_length, padding='post', truncating='post')
-        decoder_input_data = pad_sequences(decoder_input_data, maxlen=self.max_seq_length, padding='post', truncating='post')
-        decoder_target_data = pad_sequences(decoder_target_data, maxlen=self.max_seq_length, padding='post', truncating='post')
-
 
         self.logger.info(f"Encoder Input Data Shape: {encoder_input_data.shape}")
         self.logger.info(f"Decoder Input Data Shape: {decoder_input_data.shape}")
         self.logger.info(f"Decoder Target Data Shape: {decoder_target_data.shape}")
 
-        checkpoint_callback = tf.keras.callbacks.ModelCheckpoint("best_model.h5", save_best_only=True)
-
-        history = model.fit(
+        history = self.model.fit(
             [encoder_input_data, decoder_input_data],
             np.expand_dims(decoder_target_data, -1),
             batch_size=self.batch_size,
             epochs=self.epochs,
-            validation_split=self.test_size,
-            callbacks=[checkpoint_callback]
+            validation_split=self.test_size
         )
 
-        model.save(self.model_filename)
-        self.logger.info(f"Model trained and saved successfully for speaker: {speaker}")
+        self.save_model(self.model, self.encoder_model, self.decoder_model)
 
         # Evaluate the model on the test data
-        test_loss, test_accuracy = model.evaluate([encoder_input_data, decoder_input_data], np.expand_dims(decoder_target_data, -1), batch_size=self.batch_size)
+        test_loss, test_accuracy = self.model.evaluate([encoder_input_data, decoder_input_data], np.expand_dims(decoder_target_data, -1), batch_size=self.batch_size)
 
         # Save training metrics plot as an image and get the filename
-        plot_filename = self.plot_and_save_training_metrics(history, conversation_id)
+        plot_filename = self.plot_and_save_training_metrics(history, speaker)
         self.logger.info(f"Training metrics plot saved as {plot_filename}")
         self.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
         self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
+        self.logger.info(f"Model trained and saved successfully for speaker: {speaker}")
+        time.sleep(30)
 
-        # playsound("AlienNotification.mp3")
-        time.sleep(10)
-
-
-    def save_model(self):
+    def save_model(self, model, encoder_model, decoder_model):
         self.logger.info("Saving Model...")
         if self.model:
-            self.model.save(self.model_filename)
-            self.encoder_model.save(self.encoder_filename)
-            self.decoder_model.save("decoder.keras")
+            model.save(self.model_filename)
+            encoder_model.save(self.encoder_filename)
+            decoder_model.save(self.decoder_filename)
             self.logger.info("Saved Model with Encoder and Decoder")
         else:
             self.logger.warning("No model to save.")
@@ -379,14 +363,45 @@ class ChatbotTrainer:
             self.decoder_model = load_model(self.decoder_filename)
             self.logger.info("Model and Encoder/Decoder loaded successfully.")
 
-    def generate_response_with_beam_search(self, user_input, beam_width=3, batch_size=None):
+    def predict_sequence(self, input_seq):
+        # Ensure input_seq is properly padded and shaped
+        input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
+        encoder_model = load_model(self.encoder_filename)
+        decoder_model = load_model(self.decoder_filename)
+        
+        states_value = encoder_model.predict(input_seq)
+        
+        # Initialize the decoder input with the start token
+        target_seq = np.zeros((1, 1))
+        target_seq[0, 0] = self.tokenizer.word_index.get('<start>', 1)
+
+        stop_condition = False
+        decoded_sentence = []
+
+        while not stop_condition:
+            output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
+            
+            # Sample a token
+            sampled_token_index = np.argmax(output_tokens[0, -1, :])
+            sampled_token = self.tokenizer.index_word.get(sampled_token_index, '<OOV>')
+            
+            decoded_sentence.append(sampled_token)
+
+            if sampled_token == '<end>' or len(decoded_sentence) > self.max_seq_length:
+                stop_condition = True
+            
+            # Update target sequence and states
+            target_seq = np.zeros((1, 1))
+            target_seq[0, 0] = sampled_token_index
+            states_value = [h, c]
+
+        return ' '.join(decoded_sentence)
+
+    def generate_response_with_beam_search(self, user_input, beam_width=3):
         # Preprocess user input
         user_input = self.preprocess_text([user_input]).split(" ")
         user_input_seq = self.tokenizer.texts_to_sequences([user_input])
         user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
-
-        self.tokenizer.start_token = self.tokenizer.index_word['<start>']
-        self.tokenizer.end_token = self.tokenizer.index_word['<end>']
 
         reverse_target_char_index = dict(map(reversed, self.tokenizer.word_index.items()))
 
@@ -395,72 +410,54 @@ class ChatbotTrainer:
         # Perform beam search
         response_sequences = beamHelper.beam_search(user_input_seq, beam_width=beam_width)
 
-        # Convert sequences to texts (MANUALLY)
-        response_texts = []
-        for seq in response_sequences:
-             # Convert sequence to text using reverse_target_char_index
-            response_text = ' '.join([reverse_target_char_index[token] for token in seq])
-            response_texts.append(response_text)
+        # Convert sequences to texts
+        response_texts = [' '.join([reverse_target_char_index[token] for token in seq if token in reverse_target_char_index]) for seq in response_sequences]
 
-        response_string = ""
-        for response in response_texts:
-            if response not in token_index:
-                response_string = response_string + " " + response
-                
-        return response_string   # Or Uncomment below
+        response_string = " ".join(response_texts)
+        return response_string
+
 
     def generate_response(self, user_input):
-        start_token_id = 1
-        end_token_id = 2
+        start_token_id = self.tokenizer.word_index.get('<start>', 1)
+        end_token_id = self.tokenizer.word_index.get('<end>', 2)
 
-        user_inputs = self.preprocess_text(user_input)
-        user_input = []
-        for words in user_inputs.split():
-            user_input.append(words)
+        # Preprocess user input
+        user_input = self.preprocess_text([user_input])
+        user_input_seq = self.tokenizer.texts_to_sequences([user_input])
+        user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
 
-        # Texts to seq for evaluation
-        user_input_seq = self.tokenizer.texts_to_sequences(user_input)[0]
-
-        # user_input_seq = np.array([user_input_seq])
-
-        padded_input_sequences = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post', truncating='post')
-        print(padded_input_sequences)
-
-        # Encode the input sequence using the chatbot model (encoder and decoder together)
-        chatbot_output, _ = self.model.predict(padded_input_sequences)
+        # Encode the input sequence
+        encoder_model = load_model(self.encoder_filename)
+        decoder_model = load_model(self.decoder_filename)
+        states_value = encoder_model.predict(user_input_seq)
 
         # Initialize the decoder input with a start token
-        decoder_input = np.array([[start_token_id]])
+        target_seq = np.zeros((1, 1))
+        target_seq[0, 0] = start_token_id
 
-        # List to store the generated output tokens
-        output_tokens = []
+        stop_condition = False
+        decoded_sentence = []
+        
+        while not stop_condition:
+            output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
 
-        # Perform decoding step by step
-        for _ in range(max_sequence_length):  # Adjust max_sequence_length as needed
-            # Use the chatbot model to predict the next token
-            chatbot_output, _ = self.model.predict([decoder_input, padded_input_sequences])
+            # Sample a token
+            sampled_token_index = np.argmax(output_tokens[0, -1, :])
+            sampled_token = self.tokenizer.index_word.get(sampled_token_index, '<OOV>')
 
-            # Extract the decoder output (assuming it's the first part of the chatbot output)
-            decoder_output = chatbot_output[:, :max_sequence_length, :]
+            decoded_sentence.append(sampled_token)
 
-            # Print the structure of the decoder_output
-            print("Decoder Output Shape:", decoder_output.shape)
+            # Exit condition: either hit max length or find stop token
+            if sampled_token == end_token_id or len(decoded_sentence) > self.max_seq_length:
+                stop_condition = True
 
-            # Get the index of the predicted token
-            predicted_token_index = np.argmax(decoder_output)
+            # Update the target sequence (of length 1)
+            target_seq = np.zeros((1, 1))
+            target_seq[0, 0] = sampled_token_index
 
-            # Append the predicted token to the output
-            output_tokens.append(predicted_token_index)
+            # Update states
+            states_value = [h, c]
 
-            # Set the current predicted token as the input for the next decoding step
-            decoder_input = np.array([[predicted_token_index]])
-
-            # Check if the end token is predicted
-            if predicted_token_index == end_token_id:
-                break
-
-        # Convert the output tokens to words using your tokenizer or index-to-word mapping
-        predicted_output_words = [self.tokenizer.index_word.get(token, '<OOV>') for token in output_tokens]
-        response_string = " ".join(response_texts)
+        response_string = ' '.join(decoded_sentence)
 
         return response_string

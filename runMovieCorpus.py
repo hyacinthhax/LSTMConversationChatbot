@@ -11,34 +11,61 @@ import matplotlib.pyplot as plt
 import logging
 import pickle
 import convokit
-from processed_dialogs import dialog_data  # Import the dialog_data dictionary
+from processed_dialogs import dialog_data
 from playsound import playsound
-from chatbotTrainer import ChatbotTrainer  # Import your ChatbotTrainer class
+from chatbotTrainer import ChatbotTrainer
+import time
 import pdb
 
 
 def run(chatbot_trainer):
+    speakerNumber = 0
     all_input_texts = []
     all_target_texts = []
+    speakerList = []
+    # Import Speakers
+    with open('trained_speakers.txt', 'r') as file:
+        speakerList = file.read().splitlines()
+
+    choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y"]
+    user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
     for speaker, dialog_pairs in dialog_data.items():
-        if speaker not in chatbot_trainer.speakerList:
+        if speaker not in speakerList:
             conversation_id = f"'{speaker}'"
             print(f"Speaker: {conversation_id}")
             # Initialize lists for this speaker's data
             speaker_input_texts = []
             speaker_target_texts = []
 
+            # Input conversation data into input and target data from dialog pairs
             for input_text, target_text in dialog_pairs:
                 if input_text != "" and target_text != "":
-                    # pdb.set_trace()
                     speaker_input_texts.append(input_text)
                     all_input_texts.append(input_text)
                     speaker_target_texts.append(target_text)
                     all_target_texts.append(target_text)
 
+            # Only train if conversation has more than 3 input/target texts. (Either or)
             if len(speaker_input_texts) > 3:
                 # Train the model using the preprocessed training data for this speaker
-                chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
+                if user_choice.lower() in choices_yes:
+                    chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, speakerNumber, speaker)
+                    speakerNumber +=1
+                    print(f"Conversations Completed Total:  {speakerNumber}")
+                    # playsound("AlienNotification.mp3")    # Not Working due to error in playsound(Works once, then fails next, might need to stop sound)
+                    if speaker not in speakerList:
+                        speakerList.append(speaker)
+                        with open("trained_speakers.txt", 'a') as f:
+                            f.write(f"{speaker}\n")
+                    input("\nEnter to Continue...  ")
+                else:
+                    chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, speakerNumber, speaker)
+                    speakerNumber +=1
+                    if speaker not in speakerList:
+                        speakerList.append(speaker)
+                        with open("trained_speakers.txt", 'a') as f:
+                            f.write(f"{speaker}\n")
+                    print(f"Conversations Completed Total:  {speakerNumber}")
 
             else:
                 print(f"\nSkipped {speaker} for not providing enough data...  \n")
@@ -52,8 +79,8 @@ def main():
     print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
     chatbot_trainer = ChatbotTrainer()
 
-    # Initialize the corpus
-    corpus_path = "C:\\Users\\admin\\Desktop\\movie-corpus"
+    # Initialize the corpus (Needed for convo-kit to initialize)
+    corpus_path = "E:\\movie-corpus"
     chatbot_trainer.load_corpus(corpus_path)
 
     try:

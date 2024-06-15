@@ -5,6 +5,7 @@ from chatbotTrainer import ChatbotTrainer  # Import the ChatbotTrainer class
 
 
 chatbot_trainer = ChatbotTrainer()
+
 print("Chatbot is ready. Type 'exit' to end the conversation.")
 
 while True:
