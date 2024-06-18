@@ -7,8 +7,11 @@ from tensorflow import keras
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Flatten
+from tensorflow.keras.regularizers import l2
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.metrics import Precision, Recall
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import logging
@@ -107,7 +110,6 @@ class ChatbotTrainer:
         self.decoder_filename = "decoder.keras"
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
-        self.logger = self.setup_logger()  # Initialize your logger here
         self.embedding_dim =  128 # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH and Replace with your desired sequence length(Max words in response)
         self.max_seq_length = 128
         self.learning_rate = 0.00222
@@ -121,6 +123,16 @@ class ChatbotTrainer:
         self.recurrent_dropout = 0.3
         self.validation_split = 0.2
         self.test_size = 0.1
+        self.logger = self.setup_logger()  # Initialize your logger here
+        # Log Metrics...
+        self.logger.info(f"""Metrics:\n
+            Embedding/MaxSeqLength:({self.embedding_dim}, {self.max_seq_length})\n
+            Batch Size: {self.batch_size}\n
+            LSTM Units: {self.lstm_units}\n
+            Epochs: {self.epochs}\n
+            Dropout: ({self.dropout}, {self.recurrent_dropout})\n
+            Test Split: {self.test_size}\n\n""")
+
         self.encoder_model = None
         self.encoder_inputs = None
         self.decoder_inputs = None
@@ -247,6 +259,9 @@ class ChatbotTrainer:
     def preprocess_texts(self, input_texts, target_texts):
         input_texts = [self.clean_text(text) for text in input_texts]
         target_texts = [self.clean_text(text) for text in target_texts]
+        # Initialize lists to store processed inputs and targets
+        input_texts = [f"<start> {texts} <end>" for texts in input_texts]
+        target_texts = [f"<start> {texts} <end>" for texts in target_texts]
 
         for text in input_texts:
             for words in text.split(" "):
@@ -280,6 +295,8 @@ class ChatbotTrainer:
 
         input_sequences, target_sequences = self.preprocess_texts(input_texts, target_texts)
 
+        early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+
         # Save the tokenizer from VocabList
         self.save_tokenizer(self.vocabularyList)
         self.logger.info(f"Num Words:  {self.tokenizer.num_words}")
@@ -291,7 +308,7 @@ class ChatbotTrainer:
 
         if self.model is None:
             self.encoder_inputs = Input(shape=(self.max_seq_length,))
-            encoder_embedding = Embedding(input_dim=self.max_vocabulary, output_dim=self.embedding_dim)(self.encoder_inputs)
+            encoder_embedding = Embedding(input_dim=self.max_vocabulary, output_dim=self.embedding_dim, embeddings_regularizer=l2(0.01))(self.encoder_inputs)
             encoder_lstm = LSTM(self.lstm_units, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
             _, state_h, state_c = encoder_lstm(encoder_embedding)
             encoder_states = [state_h, state_c]
@@ -300,7 +317,7 @@ class ChatbotTrainer:
 
             self.decoder_inputs = Input(shape=(None,), name='decoder_input')
             decoder_embedding = Embedding(input_dim=self.max_vocabulary, output_dim=self.embedding_dim)(self.decoder_inputs)
-            decoder_lstm = LSTM(self.lstm_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout)
+            decoder_lstm = LSTM(self.lstm_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_dropout=self.recurrent_dropout, kernel_regularizer=l2(0.01))
             decoder_state_input_h = Input(shape=(self.lstm_units,))
             decoder_state_input_c = Input(shape=(self.lstm_units,))
             decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
@@ -314,7 +331,7 @@ class ChatbotTrainer:
             decoder_lstm_output, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
             self.decoder_outputs = decoder_dense(decoder_lstm_output)
             self.model = Model([self.encoder_inputs, self.decoder_inputs], self.decoder_outputs)
-            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy', Precision(), Recall()])
 
         encoder_input_data, decoder_input_data = input_sequences, target_sequences[:, :-1]
         decoder_target_data = target_sequences[:, 1:]
@@ -328,7 +345,8 @@ class ChatbotTrainer:
             np.expand_dims(decoder_target_data, -1),
             batch_size=self.batch_size,
             epochs=self.epochs,
-            validation_split=self.test_size
+            validation_split=self.test_size,
+            callbacks=[early_stopping]
         )
 
         self.save_model(self.model, self.encoder_model, self.decoder_model)
