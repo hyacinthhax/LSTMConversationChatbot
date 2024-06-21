@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import logging
 import pickle
 import convokit
-from processed_dialogs import dialog_data
+from processed_dialogs import processed_dialogs
 from playsound import playsound
 from chatbotTrainer import ChatbotTrainer
 import time
@@ -41,7 +41,7 @@ def run(chatbot_trainer):
 
     choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y", "ye"]
     user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
-    for speaker, dialog_pairs in dialog_data.items():
+    for speaker, dialog_pairs in processed_dialogs.items():
         if speaker not in speakerList:
             conversation_id = f"'{speaker}'"
             print(f"Speaker: {conversation_id}")
