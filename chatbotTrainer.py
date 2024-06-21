@@ -113,12 +113,12 @@ class ChatbotTrainer:
         self.embedding_dim =  128 # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH and Replace with your desired sequence length(Max words in response)
         self.max_seq_length = 128
         self.learning_rate = 0.00222
-        self.batch_size = 64
+        self.batch_size = 32
         self.epochs = 7
         self.vocabularyList = []
         self.max_vocab_size = None
         self.max_vocabulary = 30000
-        self.lstm_units = 1024
+        self.lstm_units = 256
         self.dropout = 0.3
         self.recurrent_dropout = 0.3
         self.validation_split = 0.2
@@ -360,7 +360,6 @@ class ChatbotTrainer:
         self.logger.info(f"Test loss for Conversation {speaker}: {test_loss}")
         self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
         self.logger.info(f"Model trained and saved successfully for speaker: {speaker}")
-        time.sleep(30)
 
     def save_model(self, model, encoder_model, decoder_model):
         self.logger.info("Saving Model...")

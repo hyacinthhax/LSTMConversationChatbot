@@ -19,7 +19,7 @@ import pdb
 
 
 def run(chatbot_trainer):
-    speakerNumber = 0
+    # All input/target lists are for scripts if ran for context
     all_input_texts = []
     all_target_texts = []
     speakerList = []
@@ -41,10 +41,14 @@ def run(chatbot_trainer):
 
     choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y", "ye"]
     user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
+    speakerNumber = 0
+    if len(speakerList) != 0:
+        speakerNumber = len(speakerList)
+
     for speaker, dialog_pairs in processed_dialogs.items():
         if speaker not in speakerList:
             conversation_id = f"'{speaker}'"
-            print(f"Speaker: {conversation_id}")
+            print(f"Speaker: {speaker}")
             # Initialize lists for this speaker's data
             speaker_input_texts = []
             speaker_target_texts = []
@@ -61,7 +65,7 @@ def run(chatbot_trainer):
             if len(speaker_input_texts) > 3:
                 # Train the model using the preprocessed training data for this speaker
                 if user_choice.lower() in choices_yes:
-                    chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, speakerNumber, speaker)
+                    chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
                     speakerNumber +=1
                     print(f"Conversations Completed Total:  {speakerNumber}")
                     # playsound("AlienNotification.mp3")    # Not Working due to error in playsound(Works once, then fails next, might need to stop sound)
@@ -71,13 +75,14 @@ def run(chatbot_trainer):
                             f.write(f"{speaker}\n")
                     input("\nEnter to Continue...  ")
                 else:
-                    chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, speakerNumber, speaker)
+                    chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
                     speakerNumber +=1
                     if speaker not in speakerList:
                         speakerList.append(speaker)
                         with open("trained_speakers.txt", 'a') as f:
                             f.write(f"{speaker}\n")
                     print(f"Conversations Completed Total:  {speakerNumber}")
+                    time.sleep(10)
 
             else:
                 print(f"\nSkipped {speaker} for not providing enough data...  \n")
