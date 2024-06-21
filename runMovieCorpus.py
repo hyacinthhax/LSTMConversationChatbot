@@ -23,11 +23,23 @@ def run(chatbot_trainer):
     all_input_texts = []
     all_target_texts = []
     speakerList = []
+    speakerListData = None
+    troubleListData = None
     # Import Speakers
     with open('trained_speakers.txt', 'r') as file:
-        speakerList = file.read().splitlines()
+        speakerListData = file.read().splitlines()
 
-    choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y"]
+    with open('troubled_speakers.txt', 'r') as file:
+        troubleListData = file.read().splitlines()
+
+    for data in speakerListData:
+        if data not in troubleListData:
+            speakerList.append(data)
+
+    # Debug Line
+    print(list(speakerList))
+
+    choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y", "ye"]
     user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
     for speaker, dialog_pairs in dialog_data.items():
         if speaker not in speakerList:

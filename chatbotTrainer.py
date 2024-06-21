@@ -114,7 +114,7 @@ class ChatbotTrainer:
         self.max_seq_length = 128
         self.learning_rate = 0.00222
         self.batch_size = 64
-        self.epochs = 3
+        self.epochs = 7
         self.vocabularyList = []
         self.max_vocab_size = None
         self.max_vocabulary = 30000
@@ -331,7 +331,7 @@ class ChatbotTrainer:
             decoder_lstm_output, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
             self.decoder_outputs = decoder_dense(decoder_lstm_output)
             self.model = Model([self.encoder_inputs, self.decoder_inputs], self.decoder_outputs)
-            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy', Precision(), Recall()])
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
         encoder_input_data, decoder_input_data = input_sequences, target_sequences[:, :-1]
         decoder_target_data = target_sequences[:, 1:]
