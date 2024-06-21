@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import logging
 import pickle
 import convokit
-from processed_dialogs import dialog_data  # Import the dialog_data dictionary
+from processed_dialogs import processed_dialogs  # Import the processed_dialogs dictionary
 import time
 import pdb
 
