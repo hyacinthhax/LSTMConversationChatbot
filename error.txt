@@ -1,9 +1,0 @@
-INFO: Loading and preprocessing corpus...
-INFO: Corpus loaded and preprocessed successfully.
-Speaker: 'u0'
-INFO: Training Model...
-ConversationID:  'u0'
-Num Words:  398
-All Index:  398
-Length VocabList:  465
-setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (97,) + inhomogeneous part.
