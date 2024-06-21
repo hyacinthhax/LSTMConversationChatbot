@@ -99,6 +99,18 @@ class BeamState:
         self.logger.debug(message)
 
 
+class MonitorEarlyStopping(EarlyStopping):
+    def __init__(self, *args, **kwargs):
+        super(MonitorEarlyStopping, self).__init__(*args, **kwargs)
+        self.stopped_epoch_list = []
+
+    def on_train_end(self, logs=None):
+        super(MonitorEarlyStopping, self).on_train_end(logs)
+        if self.stopped_epoch > 0:
+            self.stopped_epoch_list.append(self.stopped_epoch)
+            print(f"Early stopping triggered at epoch {self.stopped_epoch}")
+
+
 class ChatbotTrainer:
     def __init__(self):
         self.corpus = None
@@ -295,7 +307,9 @@ class ChatbotTrainer:
 
         input_sequences, target_sequences = self.preprocess_texts(input_texts, target_texts)
 
-        early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+        # early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+        # Create an instance of the custom early stopping callback
+        monitor_early_stopping = MonitorEarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
 
         # Save the tokenizer from VocabList
         self.save_tokenizer(self.vocabularyList)
@@ -350,6 +364,13 @@ class ChatbotTrainer:
         )
 
         self.save_model(self.model, self.encoder_model, self.decoder_model)
+
+        # Mark Trouble List
+        if len(monitor_early_stopping.stopped_epoch_list) != 0:
+            with open('troubled_speakers.txt', 'a') as f:
+                f.write(speaker)
+
+        monitor_early_stopping.stopped_epoch_list = []
 
         # Evaluate the model on the test data
         test_loss, test_accuracy = self.model.evaluate([encoder_input_data, decoder_input_data], np.expand_dims(decoder_target_data, -1), batch_size=self.batch_size)
