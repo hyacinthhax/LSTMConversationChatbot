@@ -134,7 +134,7 @@ class ChatbotTrainer:
         self.lstm_units = 256
         self.dropout = 0.2
         self.recurrent_dropout = 0.2
-        self.test_size = 0.2
+        self.test_size = 0.25
         self.logger = self.setup_logger()  # Initialize your logger here
         # Log Metrics...
         self.logger.info(f"""Metrics:\n
