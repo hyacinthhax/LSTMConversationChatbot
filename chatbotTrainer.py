@@ -132,10 +132,9 @@ class ChatbotTrainer:
         self.max_vocab_size = None
         self.max_vocabulary = 30000
         self.lstm_units = 256
-        self.dropout = 0.3
-        self.recurrent_dropout = 0.3
-        self.validation_split = 0.2
-        self.test_size = 0.1
+        self.dropout = 0.2
+        self.recurrent_dropout = 0.2
+        self.test_size = 0.2
         self.logger = self.setup_logger()  # Initialize your logger here
         # Log Metrics...
         self.logger.info(f"""Metrics:\n

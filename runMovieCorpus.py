@@ -19,11 +19,17 @@ import pdb
 
 
 def runningPercent(list1, list2):
-    x = len(list1) / len(list2)
-    percentage = x * 100
-    return percentage
+    if len(list1) > 0 and len(list2) > 0:
+        x = len(list1) / len(list2)
+        percentage = x * 100
+        percentage = round(percentage, 2)
+        return percentage
 
-def run(chatbot_trainer):
+    elif len(list1) == 0:
+        percentage = 0.0
+        return percentage
+
+def run(chatbot_trainer, user_choice):
     # All input/target lists are for scripts if ran for context
     all_input_texts = []
     all_target_texts = []
@@ -32,6 +38,7 @@ def run(chatbot_trainer):
     troubleListData = None
     troubleList = []
     allTogether = []
+    choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y", "ye"]
     runningTrouble = chatbot_trainer.troubleList
     # Import Speakers
     with open('trained_speakers.txt', 'r') as file:
@@ -58,9 +65,6 @@ def run(chatbot_trainer):
     # Debug Line
     print(list(speakerList))
 
-    choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y", "ye"]
-    user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
-
     for speaker, dialog_pairs in processed_dialogs.items():
         if speaker not in speakerList:
             conversation_id = f"'{speaker}'"
@@ -79,46 +83,53 @@ def run(chatbot_trainer):
 
             # Only train if conversation has more than 3 input/target texts. (Either or)
             if len(speaker_input_texts) > 3:
-                percent_running = round(runningPercent(troubleList, speakerList))
+                percent_running = runningPercent(troubleList, speakerList)
                 # Train the model using the preprocessed training data for this speaker
                 if user_choice.lower() in choices_yes:
                     chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
                     # playsound("AlienNotification.mp3")    # Not Working due to error in playsound(Works once, then fails next, might need to stop sound)
                     if speaker not in speakerList:
                         speakerList.append(speaker)
-                        with open("trained_speakers.txt", 'a') as f:
-                            f.write(f"{speaker}\n")
-                        for speakers in runningTrouble:
-                            if speakers not in troubleList:
-                                troubleList.append(speakers)
+
+                    with open("trained_speakers.txt", 'a') as f:
+                        f.write(f"{speaker}\n")
+
+                    for speakers in runningTrouble:
+                        if speakers not in troubleList:
+                            troubleList.append(speakers)
 
                     os.remove('troubled_speakers.txt')
                     with open('troubled_speakers.txt', 'w') as f:
                         for speakers in troubleList:
                             f.write(f"{speakers}\n")
-                    print(f"Running Percentage Failure: {percent_running}%")
+                    chatbot_trainer.logger.info(f"Running Percentage Failure: {percent_running}%")
                     print(f"Conversations Completed Total:  {len(speakerList)}\n Now is the time to quit if need be...")
                     input("\nEnter to Continue...  ")
+
                 else:
                     chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
                     if speaker not in speakerList:
                         speakerList.append(speaker)
-                        with open("trained_speakers.txt", 'a') as f:
-                            f.write(f"{speaker}\n")
-                        for speakers in runningTrouble:
-                            if speakers not in troubleList:
-                                troubleList.append(speakers)
+
+                    with open("trained_speakers.txt", 'a') as f:
+                        f.write(f"{speaker}\n")
+
+                    for speakers in runningTrouble:
+                        if speakers not in troubleList:
+                            troubleList.append(speakers)
 
                     os.remove('troubled_speakers.txt')
                     with open('troubled_speakers.txt', 'w') as f:
                         for speakers in troubleList:
                             f.write(f"{speakers}\n")
-                    print(f"Running Percentage Failure: {percent_running}%")
+                    chatbot_trainer.logger.info(f"Running Percentage Failure: {percent_running}%")
                     print(f"Conversations Completed Total:  {len(speakerList)}\n Now is the time to quit if need be...")
-                    if percent_running >= 50.0:
-                        return "Restarting to Tackle Trouble List...  "
-                    else:
-                        time.sleep(10)
+                    if percent_running != None:
+                        if percent_running > 50.0:
+                            print("Restarting to Tackle Trouble List...  ")
+                            return run(chatbot_trainer, user_choice)
+
+                    time.sleep(10)
 
             else:
                 print(f"\nSkipped {speaker} for not providing enough data...  \n")
@@ -137,11 +148,11 @@ def main():
     chatbot_trainer.load_corpus(corpus_path)
 
     try:
-        run(chatbot_trainer)
+        user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
+        run(chatbot_trainer, user_choice)
 
     except Exception as e:
         print(e)
-        run(chatbot_trainer)
 
     
 
