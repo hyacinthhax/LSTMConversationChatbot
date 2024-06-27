@@ -47,22 +47,18 @@ def run(chatbot_trainer, user_choice):
     with open('troubled_speakers.txt', 'r') as file:
         troubleListData = file.read().splitlines()
 
-    for data in speakerListData:
-        if data not in troubleListData:
-            speakerList.append(data)
 
-    def resetTogether(speakerList, troubleListData):
-        for speakers in speakerList:
-            if speakers not in allTogether:
-                allTogether.append(speakers)
-        for speakers in troubleListData:
-            if speakers not in allTogether:
-                allTogether.append(speakers)
-        allTogetherSorted = sorted(allTogether, key=int)
+    def cleanupTrained(speakerList):
+        for data in speakerList:
+            data = data.strip('\n')
+            if data not in speakerList and data not in troubleListData:
+                speakerList.append(data)
+                with open('trained_speakers.txt', 'w') as f:
+                    for speakers in speakerList:
+                        f.write(f"{speakers}\n")
 
-        return allTogetherSorted
-
-    allTogether = resetTogether(speakerList, troubleListData)
+        speakerList = sorted(speakerList, key=int)
+        return speakerList
 
     def resetTroubled():
         troubleList = []
@@ -70,8 +66,28 @@ def run(chatbot_trainer, user_choice):
         with open('troubled_speakers.txt', 'w') as f:
             f.write("")
 
+    # We Reset the file after trouble list reset(Trouble List should be empty before and after this step)
+    resetTroubled()
+
+    # We clean up the trained
+    speakerList = cleanupTrained(speakerListData)
+
+    def resetTogether(speakerList, troubleListData, topConvo):
+        topConvo = 0
+        for speakers in speakerList:
+            if speakers not in allTogether:
+                topConvo += 1
+                allTogether.append(speakers.strip('\n'))
+        for speakers in troubleListData:
+            if speakers not in allTogether:
+                topConvo += 1
+                allTogether.append(speakers.strip('\n'))
+        allTogetherSorted = sorted(allTogether, key=int)
+
+        return allTogetherSorted
+
     # Debug Line
-    print(list(speakerList))
+    # print(list(speakerList))
 
     for speaker, dialog_pairs in processed_dialogs.items():
         if speaker not in speakerList:
@@ -94,13 +110,14 @@ def run(chatbot_trainer, user_choice):
             if user_choice.lower() in choices_yes:
                 chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, conversation_id, speaker)
                 # playsound("AlienNotification.mp3")    # Not Working due to error in playsound(Works once, then fails next, might need to stop sound)
-                if speaker not in speakerList:
+                if speaker not in speakerList and speaker not in runningTrouble:
                     speakerList.append(speaker)
 
                     with open("trained_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
-                for speakers in runningTrouble:
+                # We update troubleList here on going for each speaker not saved to speakerList
+                if len(runningTrouble) != 0:
                     if speakers not in troubleList:
                         troubleList.append(speakers)
 
@@ -108,10 +125,19 @@ def run(chatbot_trainer, user_choice):
                     with open("troubled_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
-                allTogether = resetTogether(speakerList, troubleList)
+                # Find Top Convo
+                topConvo = int(cleanupTrained(speakerList)[-1])
+                allTogether = resetTogether(speakerList, troubleList, topConvo)
+                topConvo = len(allTogether)
                 percent_running = runningPercent(troubleList, allTogether)
                 chatbot_trainer.logger.info(f"Running Percentage Failure: {percent_running}%")
-                print(f"Conversations Completed Total:  {len(allTogether)}\n Don't quit if you haven't exceeded {len(allTogether)} however now is the time to quit if need be...")
+
+                # We check for speaker vs top num achieved successfully in speakerList 
+                if int(speaker.strip('\n')) < topConvo:
+                    print(f"Conversations Completed Total:  {topConvo}\n Don't quit you haven't surpassed {speaker}/{allTogether[-1]}\n Trouble List will be reset if this is an automated run...")
+                elif int(speaker.strip('\n')) > topConvo:
+                    print(f"Now is the time to quit if need be...  ")                
+
                 if percent_running != None:
                     if percent_running > 50.0:
                         print("Restarting to Tackle Trouble List...  ")
@@ -132,14 +158,21 @@ def run(chatbot_trainer, user_choice):
                     if speakers not in troubleList:
                         troubleList.append(speakers)
 
-                if speaker in troubleList:
+                if len(runningTrouble) != 0:
                     with open("troubled_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
-                allTogether = resetTogether(speakerList, troubleList)
+                # Find Top Convo
+                topConvo = int(cleanupTrained(speakerList)[-1])
+                allTogether = resetTogether(speakerList, troubleList, topConvo)
+                topConvo = len(allTogether)
                 percent_running = runningPercent(troubleList, allTogether)
                 chatbot_trainer.logger.info(f"Running Percentage Failure: {percent_running}%")
-                print(f"Conversations Completed Total:  {len(allTogether)}\n Don't quit if you haven't exceeded {len(allTogether)} however now is the time to quit if need be...")
+                if int(speaker.strip('\n')) < topConvo:
+                    print(f"Conversations Completed Total:  {topConvo}\n Don't quit you haven't surpassed {speaker}/{allTogether[-1]}\n Trouble List will be reset if this is an automated run...")
+                elif int(speaker.strip('\n')) >= topConvo:
+                    print(f"Now is the time to quit if need be...  ")
+
                 if percent_running != None:
                     if percent_running > 50.0:
                         print("Restarting to Tackle Trouble List...  ")
@@ -152,8 +185,24 @@ def run(chatbot_trainer, user_choice):
                 print(f"\nSkipped {speaker} for not providing enough data...  \n")
 
         else:
+            cleanupTroubled()
             print(f"{speaker} Skipped for being on List.")
             continue
+
+
+def cleanupTroubled():
+    tempBin = []
+    with open('troubled_speakers.txt', 'r') as fr:
+        data = fr.readlines()
+        for lines in data:
+            if lines not in tempBin:
+                tempBin.append(lines.strip('\n'))
+
+    tempBin = sorted(tempBin, key=int)
+    with open('troubled_speakers.txt', 'w') as fw:
+        fw.write("")
+        for troubled in tempBin:
+            fw.write(f"{troubled}\n")
 
 
 def main():
@@ -165,11 +214,12 @@ def main():
     chatbot_trainer.load_corpus(corpus_path)
 
     try:
+        cleanupTroubled()
         user_choice = input(f"Run Supervised?({chatbot_trainer.model_filename})\n>")
         run(chatbot_trainer, user_choice)
 
     except Exception as e:
-        print(e)
+        chatbot_trainer.logger.warning(e)
 
     
 

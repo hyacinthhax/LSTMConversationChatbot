@@ -122,9 +122,10 @@ class ChatbotTrainer:
         self.decoder_filename = "decoder.keras"
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
+        self.reverse_tokenizer = None
         self.embedding_dim =  128 # Define the embedding dimension here HAS TO BE SAME AS MAX_SEQ_LENGTH and Replace with your desired sequence length(Max words in response)
         self.max_seq_length = 128
-        self.learning_rate = 0.00222
+        self.learning_rate = 0.001
         self.batch_size = 32
         self.epochs = 7
         self.vocabularyList = []
@@ -158,30 +159,29 @@ class ChatbotTrainer:
                 for words, i in self.tokenizer.word_index.items():
                     if words not in self.vocabularyList:
                         self.vocabularyList.append(words)
+                self.reverse_tokenizer = {v: k for k, v in self.tokenizer.word_index.items()}
                 self.logger.info("Tokenizer loaded successfully.")
                 print(f"Number of words in loaded tokenizer: {len(self.tokenizer.word_index)}")
                 print(f"Number of words in the Vocab List: {len(self.vocabularyList)}")
         else:
             self.logger.warning("Tokenizer not found, making now...  ")
-            self.tokenizer = Tokenizer(num_words=None)  # Initialize the Tokenizer
+            self.tokenizer = Tokenizer(num_words=None, filters='!"#$%&()*+,-/.:;=?@[\\]^_`{|}~\t\n')  # Initialize the Tokenizer
+            self.tokenizer.num_words = 0
 
             # Save '<OOV>', '<start>', and '<end>' to word index
-            self.tokenizer.num_words = 0
-            self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
-            for token in self.vocabularyList:
-                if token not in self.tokenizer.word_index:
-                    self.tokenizer.word_index[token] = self.tokenizer.num_words
-                    self.all_vocab_size += 1
-                    self.tokenizer.num_words += 1
-
-            # Set Tokenizer Values:
-            self.tokenizer.num_words = len(self.tokenizer.word_index)
+            self.tokenizer.word_index['<PAD>'] = 0
+            self.tokenizer.word_index['<start>'] = 1
+            self.tokenizer.word_index['<end>'] = 2
+            self.tokenizer.word_index['<OOV>'] = 3
             self.tokenizer.oov_token = "<OOV>"
 
             self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
-            self.save_tokenizer(self.vocabularyList)
 
-        self.load_model_file(self.model_filename)
+        # Debug Line
+        print(list(self.tokenizer.word_index.keys()))
+
+        if os.path.exists(self.model_filename) and os.path.exists(self.encoder_filename) and os.path.exists(self.decoder_filename):
+            self.model, self.encoder_model, self.decoder_model =self.load_model_file()
 
     def plot_and_save_training_metrics(self, history, speaker):
         # Plot training metrics such as loss and accuracy
@@ -301,6 +301,8 @@ class ChatbotTrainer:
     
     def train_model(self, input_texts, target_texts, conversation_id, speaker):
         self.logger.info(f"Training Model for ConversationID: {conversation_id}")
+        if os.path.exists(self.model_filename) and os.path.exists(self.encoder_filename) and os.path.exists(self.decoder_filename):
+            self.model, self.encoder_model, self.decoder_model =self.load_model_file()
 
         if self.corpus is None or self.tokenizer is None:
             raise ValueError("Corpus or tokenizer is not initialized.")
@@ -391,14 +393,15 @@ class ChatbotTrainer:
         else:
             self.logger.warning("No model to save.")
 
-    def load_model_file(self, model_filename):
+    def load_model_file(self):
         self.logger.info("Loading Model and Tokenizer...")
-        if os.path.exists(model_filename) and os.path.exists(self.encoder_filename) and os.path.exists(self.decoder_filename):
-            # Load both the model and tokenizer using TensorFlow's load_model method
-            self.model = load_model(model_filename)
-            self.encoder_model = load_model(self.encoder_filename)
-            self.decoder_model = load_model(self.decoder_filename)
-            self.logger.info("Model and Encoder/Decoder loaded successfully.")
+        # Load both the model and tokenizer using TensorFlow's load_model method
+        model = load_model(self.model_filename)
+        encoder_model = load_model(self.encoder_filename)
+        decoder_model = load_model(self.decoder_filename)
+        self.logger.info("Model and Encoder/Decoder loaded successfully.")
+
+        return model, encoder_model, decoder_model
 
     def predict_sequence(self, input_seq):
         # Ensure input_seq is properly padded and shaped
@@ -436,8 +439,8 @@ class ChatbotTrainer:
 
     def generate_response_with_beam_search(self, user_input, beam_width=3):
         # Preprocess user input
-        user_input = self.preprocess_text([user_input]).split(" ")
-        user_input_seq = self.tokenizer.texts_to_sequences([user_input])
+        user_input = self.preprocess_text(user_input)
+        user_input_seq = self.tokenizer.texts_to_sequences(user_input)
         user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
 
         reverse_target_char_index = dict(map(reversed, self.tokenizer.word_index.items()))
@@ -453,48 +456,45 @@ class ChatbotTrainer:
         response_string = " ".join(response_texts)
         return response_string
 
+    def generate_response(self, input_text):
+        # Tokenize the input text
+        input_seq = self.preprocess_text(input_text)
+        input_seq = self.tokenizer.texts_to_sequences(input_seq)
+        input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
 
-    def generate_response(self, user_input):
-        start_token_id = self.tokenizer.word_index.get('<start>', 1)
-        end_token_id = self.tokenizer.word_index.get('<end>', 2)
+        # Encode the input as state vectors.
+        states_value = self.encoder_model.predict(input_seq)
 
-        # Preprocess user input
-        user_input = self.preprocess_text([user_input])
-        user_input_seq = self.tokenizer.texts_to_sequences([user_input])
-        user_input_seq = pad_sequences(user_input_seq, maxlen=self.max_seq_length, padding='post')
+        # Debug Line
+        print(list(self.tokenizer.word_index.keys()))
 
-        # Encode the input sequence
-        encoder_model = load_model(self.encoder_filename)
-        decoder_model = load_model(self.decoder_filename)
-        states_value = encoder_model.predict(user_input_seq)
-
-        # Initialize the decoder input with a start token
+        # Generate empty target sequence of length 1 with only the start token
         target_seq = np.zeros((1, 1))
-        target_seq[0, 0] = start_token_id
+        target_seq[0, 0] = self.tokenizer.word_index['<start>']
 
         stop_condition = False
-        decoded_sentence = []
-        
+        decoded_sentence = ''
+
         while not stop_condition:
-            output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
+            print(f"target_seq shape: {target_seq.shape}")
+            print(f"states_value shapes: {[s.shape for s in states_value]}")
+
+            output_tokens, h, c = self.decoder_model.predict([target_seq] + states_value)
 
             # Sample a token
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
-            sampled_token = self.tokenizer.index_word.get(sampled_token_index, '<OOV>')
+            sampled_token = self.reverse_tokenizer.get(sampled_token_index, '')
 
-            decoded_sentence.append(sampled_token)
+            decoded_sentence += ' ' + sampled_token
 
-            # Exit condition: either hit max length or find stop token
-            if sampled_token == end_token_id or len(decoded_sentence) > self.max_seq_length:
+            if sampled_token == '<end>' or len(decoded_sentence.split()) > self.max_seq_length:
                 stop_condition = True
 
-            # Update the target sequence (of length 1)
+            # Update the target sequence (length 1).
             target_seq = np.zeros((1, 1))
             target_seq[0, 0] = sampled_token_index
 
             # Update states
             states_value = [h, c]
 
-        response_string = ' '.join(decoded_sentence)
-
-        return response_string
+        return decoded_sentence
