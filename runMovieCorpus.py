@@ -61,7 +61,6 @@ def run(chatbot_trainer, user_choice):
         return speakerList
 
     def resetTroubled():
-        troubleList = []
         os.remove('troubled_speakers.txt')
         with open('troubled_speakers.txt', 'w') as f:
             f.write("")
@@ -140,6 +139,7 @@ def run(chatbot_trainer, user_choice):
 
                 if percent_running != None:
                     if percent_running > 50.0:
+                        troubleList = []
                         print("Restarting to Tackle Trouble List...  ")
                         resetTroubled()
                         return run(chatbot_trainer, user_choice)
@@ -175,6 +175,7 @@ def run(chatbot_trainer, user_choice):
 
                 if percent_running != None:
                     if percent_running > 50.0:
+                        troubleList = []
                         print("Restarting to Tackle Trouble List...  ")
                         resetTroubled()
                         return run(chatbot_trainer, user_choice)

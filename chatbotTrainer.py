@@ -159,23 +159,29 @@ class ChatbotTrainer:
                 for words, i in self.tokenizer.word_index.items():
                     if words not in self.vocabularyList:
                         self.vocabularyList.append(words)
-                self.reverse_tokenizer = {v: k for k, v in self.tokenizer.word_index.items()}
                 self.logger.info("Tokenizer loaded successfully.")
                 print(f"Number of words in loaded tokenizer: {len(self.tokenizer.word_index)}")
                 print(f"Number of words in the Vocab List: {len(self.vocabularyList)}")
         else:
             self.logger.warning("Tokenizer not found, making now...  ")
-            self.tokenizer = Tokenizer(num_words=None, filters='!"#$%&()*+,-/.:;=?@[\\]^_`{|}~\t\n')  # Initialize the Tokenizer
-            self.tokenizer.num_words = 0
+            self.tokenizer = Tokenizer(num_words=None, filters='!"#$%&()*+,-/.:;=?@[\\]^_`{|}~\t\n')
 
             # Save '<OOV>', '<start>', and '<end>' to word index
-            self.tokenizer.word_index['<PAD>'] = 0
-            self.tokenizer.word_index['<start>'] = 1
-            self.tokenizer.word_index['<end>'] = 2
-            self.tokenizer.word_index['<OOV>'] = 3
-            self.tokenizer.oov_token = "<OOV>"
+            self.tokenizer.num_words = 0
+            self.vocabularyList = ['<PAD>', '<start>', '<end>', '<OOV>']
+            # for token in self.vocabularyList:
+            #     if token not in self.tokenizer.word_index:
+            #         self.tokenizer.word_index[token] = self.tokenizer.num_words
+            #         self.all_vocab_size += 1
+            #         self.tokenizer.num_words += 1
 
+            # Set Tokenizer Values:
+            # self.tokenizer.num_words = len(self.tokenizer.word_index)
+            # self.tokenizer.oov_token = "<OOV>"
+
+            self.save_tokenizer(self.vocabularyList)
             self.logger.info(f"New Tokenizer Index's:  {self.tokenizer.word_index}")
+
 
         # Debug Line
         print(list(self.tokenizer.word_index.keys()))
@@ -459,11 +465,16 @@ class ChatbotTrainer:
     def generate_response(self, input_text):
         # Tokenize the input text
         input_seq = self.preprocess_text(input_text)
-        input_seq = self.tokenizer.texts_to_sequences(input_seq)
+        input_seq = self.tokenizer.texts_to_sequences([input_seq])  # Ensure it's a list of sequences
         input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
 
         # Encode the input as state vectors.
-        states_value = self.encoder_model.predict(input_seq)
+        encoder_outputs, state_h, state_c = self.encoder_model.predict(input_seq)
+
+        # Ensure the states have the correct shape (1, 256)
+        state_h = np.reshape(state_h, (1, 256))
+        state_c = np.reshape(state_c, (1, 256))
+        states_value = [state_h, state_c]
 
         # Debug Line
         print(list(self.tokenizer.word_index.keys()))
@@ -485,7 +496,7 @@ class ChatbotTrainer:
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
             sampled_token = self.reverse_tokenizer.get(sampled_token_index, '')
 
-            decoded_sentence += ' ' + sampled_token
+            decoded_sentence += sampled_token + ' '
 
             if sampled_token == '<end>' or len(decoded_sentence.split()) > self.max_seq_length:
                 stop_condition = True
@@ -497,4 +508,4 @@ class ChatbotTrainer:
             # Update states
             states_value = [h, c]
 
-        return decoded_sentence
+        return decoded_sentence.strip()
