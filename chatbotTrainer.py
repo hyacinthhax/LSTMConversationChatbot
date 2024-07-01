@@ -300,7 +300,7 @@ class ChatbotTrainer:
         preprocessed_texts = []
         for text in texts:
             # Example preprocessing: lowercase and split
-            preprocessed_text = text.lower().split()
+            preprocessed_text = text.lower().split(" ")
             preprocessed_texts.append(preprocessed_text)
         
         return preprocessed_texts
@@ -409,40 +409,6 @@ class ChatbotTrainer:
 
         return model, encoder_model, decoder_model
 
-    def predict_sequence(self, input_seq):
-        # Ensure input_seq is properly padded and shaped
-        input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
-        encoder_model = load_model(self.encoder_filename)
-        decoder_model = load_model(self.decoder_filename)
-        
-        states_value = encoder_model.predict(input_seq)
-        
-        # Initialize the decoder input with the start token
-        target_seq = np.zeros((1, 1))
-        target_seq[0, 0] = self.tokenizer.word_index.get('<start>', 1)
-
-        stop_condition = False
-        decoded_sentence = []
-
-        while not stop_condition:
-            output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
-            
-            # Sample a token
-            sampled_token_index = np.argmax(output_tokens[0, -1, :])
-            sampled_token = self.tokenizer.index_word.get(sampled_token_index, '<OOV>')
-            
-            decoded_sentence.append(sampled_token)
-
-            if sampled_token == '<end>' or len(decoded_sentence) > self.max_seq_length:
-                stop_condition = True
-            
-            # Update target sequence and states
-            target_seq = np.zeros((1, 1))
-            target_seq[0, 0] = sampled_token_index
-            states_value = [h, c]
-
-        return ' '.join(decoded_sentence)
-
     def generate_response_with_beam_search(self, user_input, beam_width=3):
         # Preprocess user input
         user_input = self.preprocess_text(user_input)
@@ -465,23 +431,18 @@ class ChatbotTrainer:
     def generate_response(self, input_text):
         # Tokenize the input text
         input_seq = self.preprocess_text(input_text)
-        input_seq = self.tokenizer.texts_to_sequences([input_seq])  # Ensure it's a list of sequences
+        input_seq = self.tokenizer.texts_to_sequences(input_seq)
         input_seq = pad_sequences(input_seq, maxlen=self.max_seq_length, padding='post')
 
         # Encode the input as state vectors.
-        encoder_outputs, state_h, state_c = self.encoder_model.predict(input_seq)
-
-        # Ensure the states have the correct shape (1, 256)
-        state_h = np.reshape(state_h, (1, 256))
-        state_c = np.reshape(state_c, (1, 256))
-        states_value = [state_h, state_c]
+        states_value = self.encoder_model.predict(input_seq)
 
         # Debug Line
-        print(list(self.tokenizer.word_index.keys()))
+        # print(list(self.tokenizer.word_index.keys()))
 
         # Generate empty target sequence of length 1 with only the start token
-        target_seq = np.zeros((1, 1))
-        target_seq[0, 0] = self.tokenizer.word_index['<start>']
+        target_seq = np.array((self.max_seq_length, ))
+        target_seq[0] = self.tokenizer.word_index['<start>']
 
         stop_condition = False
         decoded_sentence = ''
@@ -494,9 +455,10 @@ class ChatbotTrainer:
 
             # Sample a token
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
-            sampled_token = self.reverse_tokenizer.get(sampled_token_index, '')
+            sampled_token = self.tokenizer.index_word.get(sampled_token_index, '')
 
-            decoded_sentence += sampled_token + ' '
+            if sampled_token != '':
+                decoded_sentence += sampled_token + " "
 
             if sampled_token == '<end>' or len(decoded_sentence.split()) > self.max_seq_length:
                 stop_condition = True
@@ -508,4 +470,4 @@ class ChatbotTrainer:
             # Update states
             states_value = [h, c]
 
-        return decoded_sentence.strip()
+        return decoded_sentence

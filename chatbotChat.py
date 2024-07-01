@@ -32,6 +32,6 @@ while True:
         print("Chatbot: I'm sorry, I don't understand your input.")
         continue
     
-    response = chatbot_trainer.generate_response(user_input)
+    response = chatbot_trainer.generate_response_with_beam_search(user_input)
 
     print(f"Alan: {response}")
