@@ -1,37 +1,40 @@
-import os
 import re
-import numpy as np
-import tensorflow
-from tensorflow.keras.preprocessing.text import Tokenizer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout
-from tensorflow.keras.models import Model
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
-import logging
-import pickle
-import convokit
-from processed_dialogs import processed_dialogs
-from playsound import playsound
-from chatbotTrainer import ChatbotTrainer
-import time
-import pdb
+from chatbotTrainer import ChatbotTrainer  # Import the ChatbotTrainer class
 
 
-chatbot_trainer = ChatbotTrainer()
+def main():
+    # Initialize the chatbot
+    chatbot_trainer = ChatbotTrainer()
 
-print("Chatbot is ready. Type 'exit' to end the conversation.")
+    # Ensure the model and tokenizer are loaded
+    if chatbot_trainer.model is None:
+        chatbot_trainer.load_model_file()
 
-while True:
-    user_input = input("You: ")
-    if user_input.lower() == "exit":
-        print("Chatbot: Goodbye!")
-        break
+    print("Chatbot is ready. Type 'exit' to end the conversation.")
 
-    if not user_input or user_input == "":
-        print("Chatbot: I'm sorry, I don't understand your input.")
-        continue
-    
-    response = chatbot_trainer.generate_response_with_beam_search(user_input)
+    while True:
+        try:
+            user_input = input("You: ").strip()
+            if not user_input:
+                print("Chatbot: Please say something, I'm here to help!")
+                continue
 
-    print(f"Alan: {response}")
+            if user_input.lower() == "exit":
+                print("Chatbot: Goodbye! Have a great day!")
+                break
+
+            # Generate a response
+            response = chatbot_trainer.generate_response(user_input)
+
+            # Handle empty or invalid responses
+            if not response or response.strip() == "":
+                response = "I'm sorry, I don't have a response for that."
+
+            print(f"Alan: {response}")
+        except Exception as e:
+            print(f"Chatbot: An error occurred while generating a response. ({str(e)})")
+
+
+# Run the chatbot if the script is executed directly
+if __name__ == "__main__":
+    main()
