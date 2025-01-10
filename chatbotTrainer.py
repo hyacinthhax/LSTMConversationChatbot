@@ -1,15 +1,13 @@
 import os
 import re
 import numpy as np
-from itertools import chain
-import tensorflow as tf
+from keras.callbacks import Callback, ReduceLROnPlateau
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Flatten
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
 import matplotlib.pyplot as plt
 import logging
 import pickle
@@ -117,16 +115,51 @@ class BeamState:
         self.logger.debug(message)
 
 
-class MonitorEarlyStopping(EarlyStopping):
-    def __init__(self, *args, **kwargs):
-        super(MonitorEarlyStopping, self).__init__(*args, **kwargs)
-        self.stopped_epoch_list = []
 
-    def on_train_end(self, logs=None):
-        super(MonitorEarlyStopping, self).on_train_end(logs)
-        if self.stopped_epoch > 0:
-            self.stopped_epoch_list.append(self.stopped_epoch)
-            print(f"Early stopping triggered at epoch {self.stopped_epoch}")
+class MonitorEarlyStopping(Callback):
+    def __init__(self, monitor='val_loss', patience=3, mode='min', restore_best_weights=True, verbose=1):
+        super(MonitorEarlyStopping, self).__init__()
+        self.monitor = monitor
+        self.patience = patience
+        self.mode = mode
+        self.restore_best_weights = restore_best_weights
+        self.verbose = verbose
+        self.best_weights = None
+        self.best_epoch = None
+        self.wait = 0
+        self.best_value = float('inf') if mode == 'min' else -float('inf')
+        self.stopped_epoch_list = []  # List to track stopped epochs
+
+    def on_epoch_end(self, epoch, logs=None):
+        current_value = logs.get(self.monitor)
+        if current_value is None:
+            if self.verbose > 0:
+                print(f"Warning: Metric '{self.monitor}' is not available in logs.")
+            return
+
+        # Check for improvement based on mode
+        if (self.mode == 'min' and current_value < self.best_value) or (self.mode == 'max' and current_value > self.best_value):
+            self.best_value = current_value
+            self.best_weights = self.model.get_weights()
+            self.best_epoch = epoch
+            self.wait = 0
+            if self.verbose > 0:
+                print(f"Epoch {epoch + 1}: {self.monitor} improved to {self.best_value:.4f}")
+        else:
+            self.wait += 1
+            if self.verbose > 0:
+                print(f"Epoch {epoch + 1}: {self.monitor} did not improve. Patience: {self.wait}/{self.patience}")
+
+            # Stop training if patience is exceeded
+            if self.wait >= self.patience:
+                self.stopped_epoch_list.append(epoch + 1)  # Record the stopped epoch
+                if self.verbose > 0:
+                    print(f"Stopping early at epoch {epoch + 1}. Best {self.monitor}: {self.best_value:.4f} at epoch {self.best_epoch + 1}")
+                self.model.stop_training = True
+                if self.restore_best_weights:
+                    if self.verbose > 0:
+                        print(f"Restoring best model weights from epoch {self.best_epoch + 1}.")
+                    self.model.set_weights(self.best_weights)
 
 
 class ChatbotTrainer:
@@ -141,18 +174,21 @@ class ChatbotTrainer:
         self.tokenizer_save_path = "chatBotTokenizer.pkl"
         self.tokenizer = None
         self.reverse_tokenizer = None
-        self.embedding_dim =  64
+        self.early_patience = 11
+        self.embedding_dim = 128
         self.max_seq_length = 64
-        self.learning_rate = 0.001
-        self.batch_size = 32
-        self.epochs = 20
+        self.learning_rate = 0.00135
+        self.optimizer = Adam(learning_rate=self.learning_rate)
+        self.batch_size = 64
+        self.epochs = 22
         self.vocabularyList = []
         self.troubleList = []
         self.max_vocab_size = None
+        self.config = None
         self.max_vocabulary = 50000
-        self.lstm_units = 256
-        self.dropout = 0.2
-        self.recurrent_dropout = 0.2
+        self.lstm_units = 512
+        self.dropout = 0.3
+        self.recurrent_dropout = 0.3
         self.test_size = 0.25
         self.logger = self.setup_logger()  # Initialize your logger here
         # Log Metrics...
@@ -212,6 +248,10 @@ class ChatbotTrainer:
         Save the weights of the encoder and decoder to separate files.
         """
         if self.encoder_model is not None and self.decoder_model is not None:
+            if os.path.exists(encoder_path):
+                os.remove(encoder_path)
+            if os.path.exists(decoder_path):
+                os.remove(decoder_path)
             self.encoder_model.save_weights(encoder_path)
             self.decoder_model.save_weights(decoder_path)
             self.logger.info(f"Encoder weights saved at {encoder_path}.")
@@ -323,6 +363,9 @@ class ChatbotTrainer:
             embedding_weights = embedding_layer.get_weights()[0]  # Weights are stored as a list, take the first element
 
             # Save weights to a file
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
             np.save(filepath, embedding_weights)
             self.logger.info(f"Embedding weights saved successfully at {filepath}.")
         else:
@@ -399,30 +442,19 @@ class ChatbotTrainer:
         print(list(preprocessed_input))
         return preprocessed_input
 
-    def train_model(self, input_texts, target_texts, conversation_id, speaker):
-        self.logger.info(f"Training Model for ConversationID: {conversation_id}")
+    def preprocess_config(self, config):
+        """
+        Convert any non-serializable values (e.g., float32) to Python-native types.
+        """
+        for key, value in config.items():
+            if isinstance(value, dict):
+                config[key] = self.preprocess_config(value)
+            elif isinstance(value, (np.float32, np.float64, np.int32, np.int64)):
+                config[key] = float(value)
+        return config
 
-        # Load existing models if available
-        if os.path.exists(self.model_filename) and os.path.exists(self.encoder_filename) and os.path.exists(
-                self.decoder_filename):
-            self.model, self.encoder_model, self.decoder_model = self.load_model_file()
-
-        if self.corpus is None or self.tokenizer is None:
-            raise ValueError("Corpus or tokenizer is not initialized.")
-
-        # Preprocess the texts into sequences (Saves tokenizer)
-        input_sequences, target_sequences = self.preprocess_texts(input_texts, target_texts)
-
-        # Define early stopping mechanism
-        monitor_early_stopping = MonitorEarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
-
-        # Stats
-        self.logger.info(f"Num Words: {self.tokenizer.num_words}")
-        self.logger.info(f"Vocabulary Size: {len(self.tokenizer.word_index)}")
-        self.logger.info(f"Length of Vocabulary List: {len(self.vocabularyList)}")
-
-        # Build the model if it doesn't exist
-        if not self.model or not self.encoder_model or not self.decoder_model:
+    def build_model(self):
+        if not self.model:
             # Encoder
             self.encoder_inputs = Input(shape=(self.max_seq_length,))
             encoder_embedding = Embedding(
@@ -440,7 +472,6 @@ class ChatbotTrainer:
             _, state_h, state_c = encoder_lstm(encoder_embedding)
             encoder_states = [state_h, state_c]
             self.encoder_model = Model(self.encoder_inputs, encoder_states)
-            self.encoder_model.save(self.encoder_filename)
 
             # Decoder
             self.decoder_inputs = Input(shape=(None,), name='decoder_input')
@@ -454,7 +485,7 @@ class ChatbotTrainer:
                 return_state=True,
                 dropout=self.dropout,
                 recurrent_dropout=self.recurrent_dropout,
-                kernel_regularizer=l2(0.01)
+                kernel_regularizer=l2(0.001)
             )
             decoder_state_input_h = Input(shape=(self.lstm_units,))
             decoder_state_input_c = Input(shape=(self.lstm_units,))
@@ -465,17 +496,44 @@ class ChatbotTrainer:
             self.decoder_outputs = decoder_dense(decoder_lstm_output)
             self.decoder_model = Model([self.decoder_inputs] + decoder_states_inputs,
                                        [self.decoder_outputs] + decoder_states)
-            self.decoder_model.save(self.decoder_filename)
 
             # Combine encoder and decoder into the full model
             decoder_lstm_output, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
             self.decoder_outputs = decoder_dense(decoder_lstm_output)
             self.model = Model([self.encoder_inputs, self.decoder_inputs], self.decoder_outputs)
             self.model.compile(
-                optimizer=Adam(learning_rate=self.learning_rate),
+                optimizer=self.optimizer,
                 loss='sparse_categorical_crossentropy',
                 metrics=['accuracy']
             )
+            return self.model, self.encoder_model, self.decoder_model
+
+    def train_model(self, input_texts, target_texts, conversation_id, speaker):
+        config_name = "model_config.json"
+        if os.path.exists(config_name):
+            with open(config_name, 'r') as fr:
+                self.config = json.load(fr)
+        self.logger.info(f"Training Model for ConversationID: {conversation_id}")
+
+        # Load existing models if available
+        if os.path.exists(self.model_filename) and os.path.exists(self.encoder_filename) and os.path.exists(
+                self.decoder_filename):
+            self.model, self.encoder_model, self.decoder_model = self.load_model_file()
+
+        if self.corpus is None or self.tokenizer is None:
+            raise ValueError("Corpus or tokenizer is not initialized.")
+
+        # Preprocess the texts into sequences (Saves tokenizer)
+        input_sequences, target_sequences = self.preprocess_texts(input_texts, target_texts)
+
+        # Stats
+        self.logger.info(f"Num Words: {self.tokenizer.num_words}")
+        self.logger.info(f"Vocabulary Size: {len(self.tokenizer.word_index)}")
+        self.logger.info(f"Length of Vocabulary List: {len(self.vocabularyList)}")
+
+        # Build the model if it doesn't exist
+        if not self.model and not self.encoder_model and not self.decoder_model:
+            self.model, self.encoder_model, self.decoder_model = self.build_model()
 
         # Prepare training data
         encoder_input_data = input_sequences
@@ -486,6 +544,17 @@ class ChatbotTrainer:
         self.logger.info(f"Decoder Input Data Shape: {decoder_input_data.shape}")
         self.logger.info(f"Decoder Target Data Shape: {decoder_target_data.shape}")
 
+        # Instantiate the callback
+        early_stopping = MonitorEarlyStopping(
+            monitor='val_loss',
+            patience=self.early_patience,
+            mode='min',
+            restore_best_weights=True,
+            verbose=1
+        )
+
+        lr_scheduler = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, verbose=1)
+
         # Train the model
         history = self.model.fit(
             [encoder_input_data, decoder_input_data],
@@ -493,25 +562,15 @@ class ChatbotTrainer:
             batch_size=self.batch_size,
             epochs=self.epochs,
             validation_split=self.test_size,
-            callbacks=[monitor_early_stopping]
+            callbacks=[early_stopping, lr_scheduler]
         )
-
-        # Compile the model before saving
-        self.model.compile(
-            optimizer=Adam(learning_rate=self.learning_rate),
-            loss='sparse_categorical_crossentropy',
-            metrics=['accuracy']
-        )
-
-        # Save the model after training
-        self.save_model(self.model, self.encoder_model, self.decoder_model)
 
         # Log any early stopping events
-        if len(monitor_early_stopping.stopped_epoch_list) > 0:
+        if len(early_stopping.stopped_epoch_list) > 0:
             self.troubleList.append(speaker)
 
         # Reset stopped epoch list
-        monitor_early_stopping.stopped_epoch_list = []
+        early_stopping.stopped_epoch_list = []
 
         # Evaluate the model on the training data
         test_loss, test_accuracy = self.model.evaluate(
@@ -527,21 +586,28 @@ class ChatbotTrainer:
         self.logger.info(f"Test accuracy for Conversation {speaker}: {test_accuracy}")
         self.logger.info(f"Model trained and saved successfully for speaker: {speaker}")
 
+        # Compile the model before saving
+        self.model.compile(
+            optimizer=self.optimizer,
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+
+        # Save the model after training
+        self.save_model(self.model, self.encoder_model, self.decoder_model)
+
     def save_model(self, model, encoder_model, decoder_model):
         self.logger.info("Saving Model...")
         if model:
-            # Compile the model before saving
-            model.compile(
-                optimizer=Adam(learning_rate=self.learning_rate),
-                loss='sparse_categorical_crossentropy',
-                metrics=['accuracy'])
-
-            model.save(self.model_filename)
-            encoder_model.save(self.encoder_filename)
-            decoder_model.save(self.decoder_filename)
+            self.encoder_model.save(self.encoder_filename)
+            self.logger.info("Encoder saved.")
+            self.decoder_model.save(self.decoder_filename)
+            self.logger.info("Decoder saved.")
+            self.model.save(self.model_filename)
+            self.logger.info("Model saved.")
             self.save_full_weights()
             self.save_embedding_weights()
-            self.logger.info("Model saved with encoder and decoder.")
+
         else:
             self.logger.warning("No model to save.")
 
@@ -554,11 +620,6 @@ class ChatbotTrainer:
 
         self.load_full_weights()
         self.load_embedding_weights()
-        # Compile the model after loading
-        model.compile(
-            optimizer=Adam(learning_rate=self.learning_rate),
-            loss='sparse_categorical_crossentropy',
-            metrics=['accuracy'])
 
         return model, encoder_model, decoder_model
 

@@ -4,6 +4,7 @@ from chatbotTrainer import processed_dialogs
 from playsound3 import playsound
 from chatbotTrainer import ChatbotTrainer
 import time
+import random
 import pdb
 import convokit
 
@@ -34,6 +35,7 @@ def run(chatbot_trainer, user_choice, topConvo=0, top_num=0):
     troubleList = []
     allTogether = []
     choices_yes = ["yes", "ya", "yeah", "yessir", "yesir", "y", "ye"]
+    exit_commands = ["exit", "quit", "stop", "x", ""]
 
     # Import Speakers
     with open('trained_speakers.txt', 'r') as file:
@@ -76,13 +78,17 @@ def run(chatbot_trainer, user_choice, topConvo=0, top_num=0):
 
         return allTogetherSorted
 
+    all_listed = []
     # Debug Lines
     # pdb.set_trace()
     # print(list(speakerList))
 
-    for speaker, dialog_pairs in processed_dialogs.items():
+    for x in range(len(processed_dialogs.keys())):
         topConvo += 1
         counter += 1
+        randomconvo = random.randint(1, len(processed_dialogs.keys()))
+        speaker = str(randomconvo)
+        dialog_pairs = processed_dialogs[speaker]
         if speaker not in speakerList:
             conversation_id = int(speaker)
             if conversation_id > top_num:
@@ -111,12 +117,14 @@ def run(chatbot_trainer, user_choice, topConvo=0, top_num=0):
                     with open("trained_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
-                # We update troubleList here on going for each speaker not saved to speakerList
-                if speaker not in troubleList:
-                    bad_count += 1
-                    troubleList.append(speaker)
+                    continue
 
-                if speaker in troubleList:
+                elif runningTrouble.count(speaker) >= chatbot_trainer.early_patience:
+                    # We update troubleList here on going for each speaker not saved to speakerList
+                    if speaker not in troubleList:
+                        bad_count += 1
+                        troubleList.append(speaker)
+
                     with open("troubled_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
@@ -134,14 +142,21 @@ def run(chatbot_trainer, user_choice, topConvo=0, top_num=0):
                     playsound("AlienNotification.mp3")
 
                 if percent_running is not None:
-                    if percent_running > 50.0:
-                        print("Restarting to Tackle Trouble List...  ")
-                        resetTroubled()
-                        return run(chatbot_trainer, user_choice, topConvo, top_num)
+                    if percent_running > 85.0:
+                        flip_token = random.randint(0, 1)
+                        if flip_token == 1:
+                            print("Restarting to Tackle Trouble List...  ")
+                            resetTroubled()
+                            return run(chatbot_trainer, user_choice, topConvo, top_num)
+                        elif flip_token == 0:
+                            continue
 
                 input("\nEnter to Continue...  ")
 
-            elif user_choice.lower() not in choices_yes:
+            elif user_choice.lower() in exit_commands:
+                quit()
+
+            elif user_choice.lower() not in choices_yes and user_choice.lower() not in exit_commands:
                 chatbot_trainer.train_model(speaker_input_texts, speaker_target_texts, str(conversation_id), speaker)
                 if speaker not in speakerList and speaker not in runningTrouble:
                     speakerList.append(speaker)
@@ -149,12 +164,14 @@ def run(chatbot_trainer, user_choice, topConvo=0, top_num=0):
                     with open("trained_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
-                for speakers in runningTrouble:
-                    if speakers not in troubleList:
-                        bad_count += 1
-                        troubleList.append(speakers)
+                    continue
 
-                if len(runningTrouble) != 0:
+                elif runningTrouble.count(speaker) >= chatbot_trainer.early_patience:
+                    # We update troubleList here on going for each speaker not saved to speakerList
+                    if speaker not in troubleList:
+                        bad_count += 1
+                        troubleList.append(speaker)
+
                     with open("troubled_speakers.txt", 'a') as f:
                         f.write(f"{speaker}\n")
 
@@ -178,16 +195,16 @@ def run(chatbot_trainer, user_choice, topConvo=0, top_num=0):
                         print(f"Next convo in:{time_sleep-x}")
 
                 if percent_running is not None:
-                    if percent_running > 50.0:
-                        print("Restarting to Tackle Trouble List...  ")
-                        resetTroubled()
-                        return run(chatbot_trainer, user_choice, topConvo, top_num)
-
-                else:
-                    print(f"\nSkipped {speaker} for not providing enough data...  \n")
+                    if percent_running > 85.0:
+                        flip_token = random.randint(0, 1)
+                        if flip_token == 1:
+                            print("Restarting to Tackle Trouble List...  ")
+                            resetTroubled()
+                            return run(chatbot_trainer, user_choice, topConvo, top_num)
+                        elif flip_token == 0:
+                            continue
 
         else:
-            cleanupTroubled()
             print(f"{speaker} Skipped for being on List.")
             continue
 
